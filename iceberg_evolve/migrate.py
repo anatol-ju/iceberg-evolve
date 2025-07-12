@@ -1,112 +1,145 @@
-from pyiceberg.types import (
-    BooleanType,
-    DateType,
-    DoubleType,
-    IcebergType,
-    IntegerType,
-    StringType,
-    TimestampType,
-    LongType,
-    DecimalType,
-    FloatType,
-    StructType,
-    NestedField,
-    ListType
-)
-from uuid import uuid4
+from dataclasses import dataclass
 
-def from_json_type(type_str: str) -> IcebergType:
+from pyiceberg.table import Table
+from pyiceberg.types import IcebergType
+
+from iceberg_evolve.diff import SchemaDiff
+from iceberg_evolve.utils import is_narrower_than, clean_type_str
+
+
+@dataclass
+class EvolutionOperation:
+    op_type: str            # e.g. "add_column", "drop_column", "update_column_type"
+    name: str               # column path, e.g. "metadata.login_attempts"
+    current_type: IcebergType | None = None
+    new_type: IcebergType | None = None
+    doc: str | None = None
+    target: str | None = None    # for rename or move
+
+    def to_serializable_dict(self) -> dict:
+        return {
+            "operation": self.op_type,
+            "name": self.name,
+            **({"from": clean_type_str(self.current_type)} if self.current_type else {}),
+            **({"to": clean_type_str(self.new_type)} if self.new_type else {}),
+            **({"doc": self.doc} if self.doc else {}),
+            **({"target": self.target} if self.target else {}),
+        }
+
+    def pretty(self) -> str:
+        """
+        Returns a pretty string representation of the operation.
+        """
+        if self.op_type == "add_column":
+            return f"\nADD\n  {self.name}: {clean_type_str(self.new_type)}"
+        elif self.op_type == "drop_column":
+            return f"\nDROP\n  {self.name}"
+        elif self.op_type == "update_column_type":
+            return f"\nUPDATE\n  {self.name}\n  from: {clean_type_str(self.current_type)}\n    to: {clean_type_str(self.new_type)}"
+        elif self.op_type == "rename_column":
+            return f"\nRENAME\n  {self.name}\n  to: {self.target}"
+        elif self.op_type == "move_column":
+            return f"\nMOVE\n  from: {self.name} ({self.doc})\n   of: {self.target}"
+        elif self.op_type == "union_schema":
+            return f"\nUNION schema:\n  with type: {clean_type_str(self.new_type)}"
+        else:
+            return f"\nUnknown operation: {self.op_type}"
+
+    def is_breaking(self) -> bool:
+        """
+        Returns True if this operation is likely to break downstream readers/writers
+        without special allowances. E.g. dropping a column or narrowing a type.
+        """
+        if self.op_type == "drop_column":
+            return True
+        if self.op_type == "update_column_type":
+            # Narrowing types is generally breaking
+            if self.current_type and self.new_type:
+                return is_narrower_than(self.new_type, self.current_type)
+        return False
+
+
+def generate_evolution_operations(diff: SchemaDiff) -> list[EvolutionOperation]:
     """
-    Converts a string-based type name to a PyIceberg type instance.
+    Convert a schema diff into a list of schema evolution operations.
 
     Args:
-        type_str (str): A string representing the type (e.g., "string", "integer").
+        diff (SchemaDiff): The SchemaDiff returned by `compare_schemas()`.
 
     Returns:
-        A PyIceberg type instance.
-
-    Raises:
-        ValueError: If the type string is unknown.
+        list[dict]: A list of evolution operation dictionaries.
     """
-    type_map = {
-        "string": StringType(),
-        "integer": IntegerType(),
-        "int": IntegerType(),
-        "double": DoubleType(),
-        "float": DoubleType(),
-        "boolean": BooleanType(),
-        "bool": BooleanType(),
-        "date": DateType(),
-        "timestamp": TimestampType(),
-    }
+    operations: list[EvolutionOperation] = []
 
-    lower = type_str.lower()
-    if lower not in type_map:
-        raise ValueError(f"Unsupported type: {type_str}. Supported types are: {', '.join(type_map.keys())}")
-    return type_map[lower]
+    changed_parents = {f.name for f in diff.changed if "." in f.name}
+    def is_nested_under_changed(n: str) -> bool:
+        return any(n.startswith(p + ".") for p in changed_parents)
 
+    for f in diff.added:
+        if not is_nested_under_changed(f.name):
+            operations.append(EvolutionOperation(
+                op_type="add_column",
+                name=f.name,
+                new_type=f.new_type,
+                doc=getattr(f, "doc", None)
+            ))
 
-def parse_struct_type(type_str: str) -> StructType:
-    """
-    Parse a struct type string into a PyIceberg StructType.
-
-    Example:
-        'struct<foo: string, bar: integer>' -> StructType([...])
-    """
-
-    # Remove 'struct<' prefix and trailing '>'
-    inner = type_str[len("struct<"):-1]
-    fields = []
-
-    for part in inner.split(","):
-        name_type = part.strip().split(":")
-        if len(name_type) != 2:
-            raise ValueError(f"Invalid struct field: {part}")
-        name, type_name = name_type[0].strip(), name_type[1].strip()
-        fields.append(NestedField(
-            field_id=int(uuid4().int % (1 << 31)),
-            name=name,
-            field_type=from_json_type(type_name),
-            required=False
+    for f in diff.removed:
+        operations.append(EvolutionOperation(
+            op_type="drop_column",
+            name=f.name
         ))
 
-    return StructType(fields)
+    for f in diff.changed:
+        operations.append(EvolutionOperation(
+            op_type="update_column_type",
+            name=f.name,
+            current_type=f.current_type,
+            new_type=f.new_type
+        ))
+
+    return operations
 
 
-def parse_type_str(type_str: str) -> IcebergType | None:
+def apply_evolution_operations(
+    table: Table,
+    operations: list[EvolutionOperation],
+    validate: bool = True,
+    allow_incompatible: bool = False
+) -> None:
     """
-    Parse a JSON-style type string into an IcebergType.
-    Supports primitives, structs, and arrays.
-    """
-    if not type_str:
-        return None
-    ts = type_str.strip()
-    if ts.startswith("struct<") and ts.endswith(">"):
-        return parse_struct_type(ts)
-    if ts.startswith("array<") and ts.endswith(">"):
-        # parse inner type and wrap in ArrayType
-        inner = ts[len("array<"):-1]
-        inner_type = parse_type_str(inner)
-        return ListType(inner_type)
-    # primitive
-    return from_json_type(ts)
+    Apply a list of schema evolution operations to an Iceberg table.
 
+    Args:
+        table (pyiceberg.table.Table): The Iceberg table to update.
+        operations (list[EvolutionOperation]): A list of evolution operation directives.
+        validate (bool): Whether to validate the operations before applying. Defaults to True.
+        allow_incompatible (bool): Whether to allow incompatible changes like dropping columns. Defaults to False.
+    """
+    with table.update_schema(allow_incompatible_changes=allow_incompatible) as update:
+        for op in operations:
+            path = tuple(op.name.split(".")) if "." in op.name else op.name
 
-def is_narrower_than(first: IcebergType, second: IcebergType) -> bool:
-    """
-    Return True if 'first' can be promoted to 'second' without loss of information.
-    Numeric widening allowed:
-      int -> long, float, double, decimal
-      long -> float, double, decimal
-      float -> double, decimal
-      double -> decimal
-    """
-    if isinstance(first, IntegerType) and isinstance(second, (LongType, FloatType, DoubleType, DecimalType)):
-        return True
-    if isinstance(first, LongType) and isinstance(second, (FloatType, DoubleType, DecimalType)):
-        return True
-    if isinstance(first, FloatType) and isinstance(second, (DoubleType, DecimalType)):
-        return True
-    if isinstance(first, DoubleType) and isinstance(second, DecimalType):
-        return True
-    return False
+            if op.op_type == "add_column":
+                update.add_column(path, op.new_type, doc=op.doc)
+
+            elif op.op_type == "drop_column":
+                update.delete_column(path)
+
+            elif op.op_type == "update_column_type":
+                update.update_column(path, field_type=op.new_type)
+
+            elif op.op_type == "rename_column":
+                update.rename_column(path, op.target)
+
+            elif op.op_type == "move_column":
+                direction = op.doc  # Assuming direction is stored in doc or target, unclear from original
+                if direction == "first":
+                    update.move_first(path)
+                elif direction == "after":
+                    update.move_after(path, op.target)
+                elif direction == "before":
+                    update.move_before(path, op.target)
+
+            elif op.op_type == "union_schema":
+                update.union_by_name(op.new_type)

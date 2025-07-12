@@ -18,13 +18,10 @@ if __name__ == "__main__":
     diff = diff_schemas(current_schema, new_schema)
 
     print("\nSchema differences:")
-    for section, changes in diff:
-        print(f"\n{section.upper()}")
-        for change in changes:
-            print(f"\t{change}")
+    print(diff.pretty())
+
 
     operations = generate_evolution_operations(diff)
     print("\nEvolution operations:")
-    # Convert EvolutionOperation instances to dictionaries for JSON serialization
-    ops_dicts = [op.to_dict() for op in operations]
-    print("", json.dumps(ops_dicts, indent=4))
+    for op in operations:
+        print(op.pretty())
