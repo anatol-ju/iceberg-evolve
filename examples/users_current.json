@@ -1,0 +1,29 @@
+{
+  "type": "object",
+  "properties": {
+    "id": { "type": "string" },
+    "age": { "type": "integer" },
+    "signup_date": { "type": "string", "format": "date-time" },
+    "email": { "type": "string" },
+    "metadata": {
+      "type": "object",
+      "properties": {
+        "browser": { "type": "string" },
+        "location": {
+          "type": "object",
+          "properties": {
+            "city": { "type": "string" },
+            "country": { "type": "string" }
+          }
+        },
+        "login_attempts": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          }
+        }
+      }
+    }
+  },
+  "required": ["id", "age"]
+}

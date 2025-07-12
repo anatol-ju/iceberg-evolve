@@ -1,0 +1,34 @@
+{
+  "type": "object",
+  "properties": {
+    "id": { "type": "string" },
+    "age": { "type": "integer" },
+    "signup_date": { "type": "integer" },
+    "is_active": { "type": "boolean" },
+    "metadata": {
+      "type": "object",
+      "properties": {
+        "location": {
+          "type": "object",
+          "properties": {
+            "city": { "type": "string" },
+            "country": { "type": "string" }
+          }
+        },
+        "login_attempts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "timestamp": { "type": "integer" },
+              "success": { "type": "boolean" }
+            },
+            "required": ["timestamp", "success"]
+          }
+        },
+        "used_login": { "type": "string" }
+      }
+    }
+  },
+  "required": ["id", "age"]
+}
