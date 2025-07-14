@@ -5,6 +5,7 @@
     "age": { "type": "integer" },
     "signup_date": { "type": "integer" },
     "is_active": { "type": "boolean" },
+    "email": { "type": "string" },
     "metadata": {
       "type": "object",
       "properties": {

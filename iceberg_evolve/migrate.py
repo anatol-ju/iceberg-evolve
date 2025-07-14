@@ -2,9 +2,11 @@ from dataclasses import dataclass
 
 from pyiceberg.table import Table
 from pyiceberg.types import IcebergType
+from rich.console import Console
+from rich.text import Text
 
 from iceberg_evolve.diff import SchemaDiff
-from iceberg_evolve.utils import is_narrower_than, clean_type_str
+from iceberg_evolve.utils import clean_type_str, is_narrower_than
 
 
 @dataclass
@@ -26,24 +28,78 @@ class EvolutionOperation:
             **({"target": self.target} if self.target else {}),
         }
 
-    def pretty(self) -> str:
+    def pretty(self, use_color: bool = False) -> Text:
         """
         Returns a pretty string representation of the operation.
+        Only the operation header is colored if use_color is True.
+        If use_color is True, to color format the output.
+        Set it to False to return a plain string.
+
+        Args:
+            use_color (bool): Whether to use color formatting in the output.
+
+        Returns:
+            Text: A rich Text object with the formatted operation.
+
+        Example:
+            >>> op = EvolutionOperation(op_type="add_column", name="new_col", new_type=IcebergType("string"))
+            >>> print(op.pretty(use_color=True))
+            ADD COLUMN
+              new_col: string
         """
-        if self.op_type == "add_column":
-            return f"\nADD\n  {self.name}: {clean_type_str(self.new_type)}"
-        elif self.op_type == "drop_column":
-            return f"\nDROP\n  {self.name}"
-        elif self.op_type == "update_column_type":
-            return f"\nUPDATE\n  {self.name}\n  from: {clean_type_str(self.current_type)}\n    to: {clean_type_str(self.new_type)}"
-        elif self.op_type == "rename_column":
-            return f"\nRENAME\n  {self.name}\n  to: {self.target}"
-        elif self.op_type == "move_column":
-            return f"\nMOVE\n  from: {self.name} ({self.doc})\n   of: {self.target}"
-        elif self.op_type == "union_schema":
-            return f"\nUNION schema:\n  with type: {clean_type_str(self.new_type)}"
+        styles = {
+            "add_column": (
+                "ADD COLUMN",
+                "green bold",
+                f"  {self.name}: {clean_type_str(self.new_type)}"
+            ),
+            "drop_column": (
+                "DROP COLUMN",
+                "red bold",
+                f"  {self.name}"
+            ),
+            "update_column_type": (
+                "UPDATE COLUMN",
+                "yellow bold",
+                f"  {self.name}\n  from: {clean_type_str(self.current_type)}\n    to: {clean_type_str(self.new_type)}"
+            ),
+            "rename_column": (
+                "RENAME COLUMN",
+                "cyan bold",
+                f"  {self.name}\n  to: {self.target}"
+            ),
+            "move_column": (
+                "MOVE COLUMN",
+                "magenta bold",
+                f"  from: {self.name} ({self.doc})\n   of: {self.target}"
+            ),
+            "union_schema": (
+                "UNION SCHEMA:",
+                "blue bold",
+                f"  with type: {clean_type_str(self.new_type)}"
+            )
+        }
+
+        label, style, body = styles.get(
+            self.op_type,
+            (f"Unknown operation: {self.op_type}", "white", "")
+        )
+
+        if use_color:
+            return Text.assemble((f"\n{label}\n", style), body)
         else:
-            return f"\nUnknown operation: {self.op_type}"
+            return Text.assemble(f"\n{label}\n", body)
+
+    def display(self, use_color: bool = True, console: Console | None = None) -> None:
+        """
+        Pretty print the schema diff using rich formatting.
+
+        Args:
+            use_color (bool): Whether to apply color styling.
+            console (Console | None): Optional rich Console to use for output.
+        """
+        console = console or Console()
+        console.print(self.pretty(use_color=use_color))
 
     def is_breaking(self) -> bool:
         """
@@ -57,7 +113,6 @@ class EvolutionOperation:
             if self.current_type and self.new_type:
                 return is_narrower_than(self.new_type, self.current_type)
         return False
-
 
 def generate_evolution_operations(diff: SchemaDiff) -> list[EvolutionOperation]:
     """
@@ -95,7 +150,9 @@ def generate_evolution_operations(diff: SchemaDiff) -> list[EvolutionOperation]:
             op_type="update_column_type",
             name=f.name,
             current_type=f.current_type,
-            new_type=f.new_type
+            new_type=f.new_type,
+            doc=getattr(f, "doc", None),
+            target=getattr(f, "target", None)
         ))
 
     return operations

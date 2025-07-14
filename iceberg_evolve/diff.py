@@ -1,25 +1,32 @@
 from dataclasses import dataclass, fields
 
 from pyiceberg.types import IcebergType
-from iceberg_evolve.utils import parse_sql_type
-
+from rich.console import Console
+from rich.text import Text
 from schemaworks import JsonSchemaConverter
 
 from iceberg_evolve.schema import Schema
+from iceberg_evolve.utils import parse_sql_type
 
 
 @dataclass
 class FieldChange:
+    """
+    Represents a change in a field between two schemas.
+    This can be an addition, removal, or type change.
+    """
     name: str
     current_type: IcebergType | None = None
     new_type: IcebergType | None = None
+    doc: str | None = None
+    target: str | None = None
 
     def pretty(self, change_type: str) -> str:
         from iceberg_evolve.utils import clean_type_str
         if change_type == "added":
             return f"{self.name}: {clean_type_str(self.new_type)}"
         elif change_type == "removed":
-            return f"{self.name}: {clean_type_str(self.current_type)}"
+            return self.name
         elif change_type == "changed":
             ct = clean_type_str(self.current_type)
             nt = clean_type_str(self.new_type)
@@ -29,6 +36,10 @@ class FieldChange:
 
 @dataclass
 class SchemaDiff:
+    """
+    Represents the differences between two schemas.
+    Contains lists of added, removed, and changed fields.
+    """
     added: list[FieldChange]
     removed: list[FieldChange]
     changed: list[FieldChange]
@@ -37,16 +48,40 @@ class SchemaDiff:
         for f in fields(self):
             yield f.name, getattr(self, f.name)
 
-    def pretty(self) -> str:
+    def pretty(self, use_color: bool = False) -> Text:
         """
-        Returns a pretty string representation of the schema diff.
+        Returns a pretty Text representation of the schema diff.
         """
+        color_map = {
+            "added": "green",
+            "removed": "red",
+            "changed": "yellow"
+        }
         lines = []
         for section, changes in self:
-            lines.append(f"\n{section.upper()}:")
+            if use_color:
+                header = Text.assemble((f"\n{section.upper()}:", color_map.get(section, "")))
+            else:
+                header = Text(f"\n{section.upper()}:")
+            lines.append(header)
             for change in changes:
-                lines.append(f"  {change.pretty(change_type=section)}")
-        return "\n".join(lines)
+                line_text = change.pretty(change_type=section)
+                if use_color:
+                    lines.append(Text(f"  {line_text}"))
+                else:
+                    lines.append(Text(f"  {line_text}"))
+        return Text("\n").join(lines)
+
+    def display(self, use_color: bool = True, console: Console | None = None) -> None:
+        """
+        Pretty print the schema diff using rich formatting.
+
+        Args:
+            use_color (bool): Whether to apply color styling.
+            console (Console | None): Optional rich Console to use for output.
+        """
+        console = console or Console()
+        console.print(self.pretty(use_color=use_color))
 
 def _add_type_change_if_different(changes, path, type_from, type_to):
     if not any(c["name"] == path and c["type_from"] == type_from and c["type_to"] == type_to for c in changes["type_change"]):
@@ -187,7 +222,9 @@ def diff_schemas(current: Schema, new: Schema) -> SchemaDiff:
         changed.append(FieldChange(
             name=entry["name"],
             current_type=ct_obj,
-            new_type=nt_obj
+            new_type=nt_obj,
+            doc=entry.get("doc"),
+            target=entry.get("target")
         ))
 
     return SchemaDiff(added=added, removed=removed, changed=changed)

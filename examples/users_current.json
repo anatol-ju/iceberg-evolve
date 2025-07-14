@@ -4,7 +4,7 @@
     "id": { "type": "string" },
     "age": { "type": "integer" },
     "signup_date": { "type": "string", "format": "date-time" },
-    "email": { "type": "string" },
+    "email_address": { "type": "string" },
     "metadata": {
       "type": "object",
       "properties": {

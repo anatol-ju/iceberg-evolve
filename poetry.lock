@@ -1992,4 +1992,4 @@ dev = ["moto", "pytest", "pytest-cov", "pytest-mock", "ruff"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.10"
-content-hash = "cd2407cb4c090cba1296342344412e43137e8ec7e6ac8d5ffc9c20d869328dbd"
+content-hash = "132916046faea0c086cf600b40926adfba24c671f4bbe2b51076bdd47c0dc6b9"

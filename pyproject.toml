@@ -12,6 +12,7 @@ dependencies = [
     "pyiceberg (>=0.9.1,<1.0.0)",
     "schemaworks (>=1.1.0,<2.0.0)",
     "boto3 (>=1.39.4,<2.0.0)",
+    "rich (>=10.11.0,<14.0.0)"
 ]
 keywords = ["iceberg", "schema", "evolution", "data-engineering"]
 classifiers = [
@@ -47,6 +48,9 @@ omit = [
 
 [tool.poetry.group.dev.dependencies]
 pre-commit = "^4.2.0"
+
+[project.scripts]
+example = "examples.evolve_test:main"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
