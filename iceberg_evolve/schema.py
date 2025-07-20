@@ -5,7 +5,7 @@ PyIceberg documentation: https://py.iceberg.apache.org/configuration/
 
 Examples:
     # Load from local JSON file
-    schema = Schema.from_file("schemas/my_table.json")
+    schema = Schema.from_json_file("schemas/my_table.json")
 
     # Load from an Iceberg table using a configured catalog (via pyiceberg.yaml)
     schema = Schema.from_iceberg("mydb.mytable", catalog="glue")
@@ -51,6 +51,8 @@ Examples:
         }
     )
 """
+from pyiceberg.schema import Schema as IcebergSchema
+from pyiceberg.types import StructType, NestedField
 import json
 from schemaworks import JsonSchemaConverter
 
@@ -94,6 +96,9 @@ class Schema:
             FileNotFoundError: If the file does not exist.
             json.JSONDecodeError: If the file is not a valid JSON.
         """
+        if not path.lower().endswith(".json"):
+            raise ValueError("Currently, only JSON files are supported for schema loading.")
+
         with open(path) as f:
             data = json.load(f)
         return cls(schema=data)
@@ -131,8 +136,30 @@ class Schema:
             boto3.exceptions.S3UploadFailedError: If the S3 object cannot be accessed.
             json.JSONDecodeError: If the S3 object is not a valid JSON.
         """
+        if not key.lower().endswith(".json"):
+            raise ValueError("Currently, only JSON files are supported for schema loading from S3.")
+
         import boto3
         s3 = boto3.resource("s3")
         obj = s3.Object(bucket, key)
         data = json.loads(obj.get()["Body"].read().decode("utf-8"))
         return cls(schema=data)
+
+
+    def to_iceberg_schema(self) -> IcebergSchema:
+        """
+        Convert the loaded JSON Schema into a PyIceberg Schema with stable incremental field IDs.
+        Supports nested structs, arrays, and maps.
+
+        Returns:
+            IcebergSchema: A schema object with field IDs assigned recursively.
+        """
+        from iceberg_evolve.utils import IDAllocator, convert_json_to_iceberg_field
+
+        allocator = IDAllocator()
+        required_fields = set(self.schema.get("required", []))
+        top_fields = [
+            convert_json_to_iceberg_field(name, spec, allocator, required_fields)
+            for name, spec in self.fields.items()
+        ]
+        return IcebergSchema(*top_fields)

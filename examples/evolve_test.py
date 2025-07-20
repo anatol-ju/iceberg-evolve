@@ -1,31 +1,35 @@
 import json
 import os
 
-from iceberg_evolve.diff import diff_schemas
-from iceberg_evolve.migrate import generate_evolution_operations
-from iceberg_evolve.schema import Schema
+from pyiceberg.schema import Schema
+
+from iceberg_evolve.diff import SchemaDiff
+from iceberg_evolve.utils import IcebergSchemaSerializer
 
 
 def load_schema(path: str) -> Schema:
     with open(path, "r", encoding="utf-8") as f:
         data = json.load(f)
-    return Schema(schema=data)
+    return IcebergSchemaSerializer.from_dict(data)
 
 def main():
     base_path = os.path.join(os.path.dirname(__file__), "..", "examples")
-    current_schema = load_schema(os.path.join(base_path, "users_current.json"))
-    new_schema = load_schema(os.path.join(base_path, "users_new.json"))
+    current_schema_path = os.path.join(base_path, "users_current_serialized.json")
+    new_schema_path = os.path.join(base_path, "users_new_serialized.json")
 
-    diff = diff_schemas(current_schema, new_schema)
+    current_schema = load_schema(current_schema_path)
+    new_schema = load_schema(new_schema_path)
+
+    # Generate diff
+    diff = SchemaDiff.from_schemas(current_schema, new_schema)
 
     print("\nSchema differences:")
-    diff.display(use_color=True)
+    diff.display()
 
-
-    operations = generate_evolution_operations(diff)
-    print("\nEvolution operations:")
-    for op in operations:
-        op.display()
+    # operations = diff.to_evolution_operations()
+    # print("\nEvolution operations:")
+    # for op in operations:
+    #     op.display()
 
 if __name__ == "__main__":
     main()

@@ -2,8 +2,8 @@ from dataclasses import dataclass
 
 from pyiceberg.table.update.schema import UpdateSchema
 from pyiceberg.types import IcebergType
-from rich.text import Text
 from rich.console import Console
+from rich.text import Text
 
 from iceberg_evolve.utils import clean_type_str, is_narrower_than
 
@@ -54,6 +54,10 @@ class AddColumn(BaseEvolutionOperation):
     doc: str | None = None
 
     def to_serializable_dict(self) -> dict:
+        """
+        Convert the operation to a serializable dictionary format.
+        This is useful for serialization or logging.
+        """
         return {
             "operation": "add_column",
             "name": self.name,
@@ -62,12 +66,27 @@ class AddColumn(BaseEvolutionOperation):
         }
 
     def pretty(self, use_color: bool = False) -> Text:
-        label = "ADD COLUMN"
+        """
+        Generate a pretty representation of the operation.
+
+        Args:
+            use_color (bool): Whether to apply color styling.
+
+        Returns:
+            Text: A rich Text object representing the operation.
+        """
+        label = "ADD"
         style = "green bold" if use_color else None
         body = f"  {self.name}: {clean_type_str(self.new_type)}"
         return Text.assemble((f"\n{label}\n", style), body)
 
     def apply(self, update: UpdateSchema) -> None:
+        """
+        Apply the add column operation to the schema update.
+
+        Args:
+            update (UpdateSchema): The schema update object to apply the operation to.
+        """
         path = tuple(self.name.split(".")) if "." in self.name else self.name
         update.add_column(path, self.new_type, doc=self.doc)
 
@@ -81,22 +100,48 @@ class DropColumn(BaseEvolutionOperation):
         name (str): The name of the column to drop.
     """
     def to_serializable_dict(self) -> dict:
+        """
+        Convert the operation to a serializable dictionary format.
+        This is useful for serialization or logging.
+        """
         return {
             "operation": "drop_column",
             "name": self.name
         }
 
     def pretty(self, use_color: bool = False) -> Text:
-        label = "DROP COLUMN"
+        """
+        Generate a pretty representation of the drop column operation.
+
+        Args:
+            use_color (bool): Whether to apply color styling.
+
+        Returns:
+            Text: A rich Text object representing the operation.
+        """
+        label = "DROP"
         style = "red bold" if use_color else None
         body = f"  {self.name}"
         return Text.assemble((f"\n{label}\n", style), body)
 
     def apply(self, update: UpdateSchema) -> None:
+        """
+        Apply the drop column operation to the schema update.
+
+        Args:
+            update (UpdateSchema): The schema update object to apply the operation to.
+        """
         path = tuple(self.name.split(".")) if "." in self.name else self.name
         update.delete_column(path)
 
     def is_breaking(self) -> bool:
+        """
+        Check if dropping the column is a breaking change.
+        This operation is always considered breaking because it removes data.
+
+        Returns:
+            bool: True if the operation is breaking, False otherwise.
+        """
         return True
 
 
@@ -116,6 +161,10 @@ class UpdateColumn(BaseEvolutionOperation):
     doc: str | None = None
 
     def to_serializable_dict(self) -> dict:
+        """
+        Convert the operation to a serializable dictionary format.
+        This is useful for serialization or logging.
+        """
         return {
             "operation": "update_column_type",
             "name": self.name,
@@ -125,16 +174,38 @@ class UpdateColumn(BaseEvolutionOperation):
         }
 
     def pretty(self, use_color: bool = False) -> Text:
-        label = "UPDATE COLUMN"
+        """
+        Generate a pretty representation of the update column operation.
+
+        Args:
+            use_color (bool): Whether to apply color styling.
+
+        Returns:
+            Text: A rich Text object representing the operation.
+        """
+        label = "UPDATE"
         style = "yellow bold" if use_color else None
         body = f"  {self.name}\n  from: {clean_type_str(self.current_type)}\n    to: {clean_type_str(self.new_type)}"
         return Text.assemble((f"\n{label}\n", style), body)
 
     def apply(self, update: UpdateSchema) -> None:
+        """
+        Apply the update column operation to the schema update.
+
+        Args:
+            update (UpdateSchema): The schema update object to apply the operation to.
+        """
         path = tuple(self.name.split(".")) if "." in self.name else self.name
         update.update_column(path, field_type=self.new_type)
 
     def is_breaking(self) -> bool:
+        """
+        Check if updating the column type is a breaking change.
+        This is the case if the new type is narrower than the current type.
+
+        Returns:
+            bool: True if the operation is breaking, False otherwise.
+        """
         return is_narrower_than(self.new_type, self.current_type)
 
 
@@ -150,6 +221,10 @@ class RenameColumn(BaseEvolutionOperation):
     target: str
 
     def to_serializable_dict(self) -> dict:
+        """
+        Convert the operation to a serializable dictionary format.
+        This is useful for serialization or logging.
+        """
         return {
             "operation": "rename_column",
             "name": self.name,
@@ -157,12 +232,27 @@ class RenameColumn(BaseEvolutionOperation):
         }
 
     def pretty(self, use_color: bool = False) -> Text:
-        label = "RENAME COLUMN"
+        """
+        Generate a pretty representation of the rename column operation.
+
+        Args:
+            use_color (bool): Whether to apply color styling.
+
+        Returns:
+            Text: A rich Text object representing the operation.
+        """
+        label = "RENAME"
         style = "cyan bold" if use_color else None
         body = f"  {self.name}\n  to: {self.target}"
         return Text.assemble((f"\n{label}\n", style), body)
 
     def apply(self, update: UpdateSchema) -> None:
+        """
+        Apply the rename column operation to the schema update.
+
+        Args:
+            update (UpdateSchema): The schema update object to apply the operation to.
+        """
         path = tuple(self.name.split(".")) if "." in self.name else self.name
         update.rename_column(path, self.target)
 
@@ -181,6 +271,10 @@ class MoveColumn(BaseEvolutionOperation):
     position: str  # "first", "before", or "after"
 
     def to_serializable_dict(self) -> dict:
+        """
+        Convert the operation to a serializable dictionary format.
+        This is useful for serialization or logging.
+        """
         return {
             "operation": "move_column",
             "name": self.name,
@@ -189,12 +283,27 @@ class MoveColumn(BaseEvolutionOperation):
         }
 
     def pretty(self, use_color: bool = False) -> Text:
-        label = "MOVE COLUMN"
+        """
+        Generate a pretty representation of the move column operation.
+
+        Args:
+            use_color (bool): Whether to apply color styling.
+
+        Returns:
+            Text: A rich Text object representing the operation.
+        """
+        label = "MOVE"
         style = "magenta bold" if use_color else None
         body = f"  from: {self.name} ({self.position})\n   of: {self.target}"
         return Text.assemble((f"\n{label}\n", style), body)
 
     def apply(self, update: UpdateSchema) -> None:
+        """
+        Apply the move column operation to the schema update.
+
+        Args:
+            update (UpdateSchema): The schema update object to apply the operation to.
+        """
         path = tuple(self.name.split(".")) if "." in self.name else self.name
         if self.position == "first":
             update.move_first(path)
@@ -215,16 +324,36 @@ class UnionSchema(BaseEvolutionOperation):
     new_type: IcebergType
 
     def to_serializable_dict(self) -> dict:
+        """
+        Convert the operation to a serializable dictionary format.
+        This is useful for serialization or logging.
+        """
         return {
             "operation": "union_schema",
             "with": clean_type_str(self.new_type),
         }
 
     def pretty(self, use_color: bool = False) -> Text:
+        """
+        Generate a pretty representation of the union schema operation.
+
+        Args:
+            use_color (bool): Whether to apply color styling.
+
+        Returns:
+            Text: A rich Text object representing the operation.
+        """
         label = "UNION SCHEMA"
         style = "blue bold" if use_color else None
         body = f"  with type: {clean_type_str(self.new_type)}"
         return Text.assemble((f"\n{label}\n", style), body)
 
     def apply(self, update: UpdateSchema) -> None:
+        """
+        Apply the union schema operation to the schema update.
+        This operation adds the new type to the current schema.
+
+        Args:
+            update (UpdateSchema): The schema update object to apply the operation to.
+        """
         update.union_by_name(self.new_type)

@@ -1,36 +1,63 @@
 from dataclasses import dataclass, fields
 
-from pyiceberg.types import IcebergType
+from pyiceberg.types import IcebergType, NestedField, StructType, ListType
 from rich.console import Console
 from rich.text import Text
-from schemaworks import JsonSchemaConverter
 
 from iceberg_evolve.schema import Schema
-from iceberg_evolve.utils import parse_sql_type
+from iceberg_evolve.evolution_operation import (
+    AddColumn,
+    DropColumn,
+    RenameColumn,
+    UpdateColumn,
+    MoveColumn,
+    BaseEvolutionOperation,
+)
 
 
 @dataclass
 class FieldChange:
     """
     Represents a change in a field between two schemas.
-    This can be an addition, removal, or type change.
+    This can be an addition, removal, rename, move, doc or type change.
+
+    Attributes:
+        name (str): The name of the field (new name for renamed fields).
+        current_type (IcebergType | None): The current type of the field.
+        new_type (IcebergType | None): The new type of the field.
+        doc (str | None): Documentation string for the field.
+        change (str): One of "added", "removed", "type_changed", "doc_changed", "renamed", "moved".
+        previous_name (str | None): Original name if this is a rename.
+        position (str | None): "first", "before", or "after" for moved fields.
+        relative_to (str | None): Field this one is moved relative to.
     """
     name: str
+    change: str  # "added", "removed", "type_changed", "doc_changed", "renamed", "moved"
     current_type: IcebergType | None = None
     new_type: IcebergType | None = None
     doc: str | None = None
-    target: str | None = None
+    previous_name: str | None = None  # For renamed columns
+    position: str | None = None       # For moved columns ("before", "after", "first")
+    relative_to: str | None = None    # Target column for moved columns
 
-    def pretty(self, change_type: str) -> str:
+    def pretty(self) -> str:
         from iceberg_evolve.utils import clean_type_str
-        if change_type == "added":
+        if self.change == "added":
             return f"{self.name}: {clean_type_str(self.new_type)}"
-        elif change_type == "removed":
+        elif self.change == "removed":
             return self.name
-        elif change_type == "changed":
+        elif self.change == "type_changed":
             ct = clean_type_str(self.current_type)
             nt = clean_type_str(self.new_type)
             return f"{self.name}:\n  from: {ct}\n    to: {nt}"
+        elif self.change == "doc_changed":
+            return f"{self.name}: doc changed"
+        elif self.change == "renamed":
+            return f"{self.previous_name} renamed to {self.name}"
+        elif self.change == "moved":
+            pos = self.position or ""
+            rel = self.relative_to or ""
+            return f"{self.name} moved {pos} {rel}".strip()
         else:
             return str(self)
 
@@ -39,6 +66,11 @@ class SchemaDiff:
     """
     Represents the differences between two schemas.
     Contains lists of added, removed, and changed fields.
+
+    Attributes:
+        added (list[FieldChange]): Fields added in the new schema.
+        removed (list[FieldChange]): Fields removed from the current schema.
+        changed (list[FieldChange]): Fields changed between the schemas.
     """
     added: list[FieldChange]
     removed: list[FieldChange]
@@ -48,183 +80,130 @@ class SchemaDiff:
         for f in fields(self):
             yield f.name, getattr(self, f.name)
 
-    def pretty(self, use_color: bool = False) -> Text:
+    def __str__(self) -> str:
         """
-        Returns a pretty Text representation of the schema diff.
+        Return a plain-text representation of the schema diff for debugging or logging.
         """
-        color_map = {
-            "added": "green",
-            "removed": "red",
-            "changed": "yellow"
-        }
         lines = []
-        for section, changes in self:
-            if use_color:
-                header = Text.assemble((f"\n{section.upper()}:", color_map.get(section, "")))
-            else:
-                header = Text(f"\n{section.upper()}:")
-            lines.append(header)
-            for change in changes:
-                line_text = change.pretty(change_type=section)
-                if use_color:
-                    lines.append(Text(f"  {line_text}"))
-                else:
-                    lines.append(Text(f"  {line_text}"))
-        return Text("\n").join(lines)
 
-    def display(self, use_color: bool = True, console: Console | None = None) -> None:
+        for section, changes in self:
+            if not changes:
+                continue
+            lines.append(f"{section.upper()}:")
+            for change in changes:
+                lines.append(f"  - {change.pretty()}")
+            lines.append("")
+
+        return "\n".join(lines)
+
+    def display(self, console: Console | None = None) -> None:
+        # delegate all rendering
+        from iceberg_evolve.renderer import SchemaDiffRenderer
+        SchemaDiffRenderer(self, console).display()
+
+    @staticmethod
+    def from_schemas(current: Schema, new: Schema) -> "SchemaDiff":
         """
-        Pretty print the schema diff using rich formatting.
+        Create a SchemaDiff from two Schema objects.
 
         Args:
-            use_color (bool): Whether to apply color styling.
-            console (Console | None): Optional rich Console to use for output.
+            current (Schema): The current schema.
+            new (Schema): The new schema to compare against.
+
+        Returns:
+            SchemaDiff: The differences between the two schemas.
         """
-        console = console or Console()
-        console.print(self.pretty(use_color=use_color))
+        added = []
+        removed = []
+        changed = []
 
-def _add_type_change_if_different(changes, path, type_from, type_to):
-    if not any(c["name"] == path and c["type_from"] == type_from and c["type_to"] == type_to for c in changes["type_change"]):
-        changes["type_change"].append({
-            "name": path,
-            "type_from": type_from,
-            "type_to": type_to
-        })
-
-def _merge_changes(base_changes, nested_changes):
-    for key in base_changes:
-        for entry in nested_changes[key]:
-            if entry not in base_changes[key]:
-                base_changes[key].append(entry)
-
-def _resolve_struct_type(item_schema: dict) -> str:
-    if item_schema.get("type") == "object" and "properties" in item_schema:
-        fields = [f"{k}: {v.get('type')}" for k, v in item_schema["properties"].items()]
-        return f"struct<{', '.join(fields)}>"
-    return item_schema.get("type", "unknown")
-
-def _diff_schemas(current_schema: dict, new_schema: dict, current_dtypes: dict[str, str], new_dtypes: dict[str, str], path: str = "") -> dict:
-    """
-    Compare two JSON schemas recursively.
-
-    Args:
-        current_schema (dict): The original schema to compare against.
-        new_schema (dict): The new schema to compare with.
-        path (str): The current path in the schema for nested properties.
-
-    Returns:
-        dict: A dictionary with 'add', 'remove', and 'type_change' keys,
-              each containing a list of changes.
-    """
-
-    changes = {"add": [], "remove": [], "type_change": []}
-
-    old_props = current_schema.get("properties", {})
-    new_props = new_schema.get("properties", {})
-
-    # Detect additions and recursive diffs
-    for prop, new_field in new_props.items():
-        full_name = f"{path}.{prop}" if path else prop
-        if prop not in old_props:
-            if path == "":
-                # Only treat as add if it's a top-level field
-                changes["add"].append({
-                    "name": full_name,
-                    "type": new_field.get("type")
-                })
-            else:
-                # Treat as a type change to the parent field
-                parent_type_from = current_dtypes.get(path, _resolve_struct_type(current_schema))
-                parent_type_to = new_dtypes.get(path, _resolve_struct_type(new_schema))
-                _add_type_change_if_different(changes, path, parent_type_from, parent_type_to)
-                continue
-        else:
-            # Present in both: check type
-            old_field = old_props[prop]
-            old_type = old_field.get("type")
-            new_type = new_field.get("type")
-            if old_type != new_type:
-                if old_type == "object" and "properties" in old_field and new_type == "object" and "properties" in new_field:
-                    type_from = _resolve_struct_type(old_field)
-                    type_to = _resolve_struct_type(new_field)
+        def _diff_fields(
+            current_fields: dict[int, NestedField],
+            new_fields: dict[int, NestedField],
+            parent_path: str = "",
+        ):
+            for field_id, new_field in new_fields.items():
+                path = f"{parent_path}.{new_field.name}" if parent_path else new_field.name
+                if field_id not in current_fields:
+                    added.append(FieldChange(name=path, new_type=new_field.field_type, doc=new_field.doc, change="added"))
                 else:
-                    type_from = current_dtypes.get(full_name, old_type)
-                    type_to = new_dtypes.get(full_name, new_type)
-                _add_type_change_if_different(changes, full_name, type_from, type_to)
+                    current_field = current_fields[field_id]
+                    current_path = f"{parent_path}.{current_field.name}" if parent_path else current_field.name
 
-            # Recurse into nested objects
-            if new_type == "object":
-                nested = _diff_schemas(old_field, new_field, current_dtypes, new_dtypes, full_name)
-                _merge_changes(changes, nested)
+                    # Detect renames
+                    if current_field.name != new_field.name:
+                        changed.append(FieldChange(
+                            name=path,
+                            previous_name=current_field.name,
+                            current_type=current_field.field_type,
+                            new_type=new_field.field_type,
+                            doc=new_field.doc,
+                            change="renamed"
+                        ))
 
-            # Compare array items
-            if new_type == "array":
-                old_items = old_field.get("items", {})
-                new_items = new_field.get("items", {})
-                item_name = f"{full_name}[]"  # Leave this as-is for nested diff tracking
-                old_item_type = old_items.get("type")
-                new_item_type = new_items.get("type")
+                    # Detect type changes
+                    if current_field.field_type != new_field.field_type:
+                        changed.append(FieldChange(
+                            name=path,
+                            current_type=current_field.field_type,
+                            new_type=new_field.field_type,
+                            doc=new_field.doc,
+                            change="type_changed"
+                        ))
 
-                if old_item_type and new_item_type and old_item_type != new_item_type:
-                    type_from = f"array<{_resolve_struct_type(old_items)}>"
-                    type_to = f"array<{_resolve_struct_type(new_items)}>"
-                    _add_type_change_if_different(changes, full_name, type_from, type_to)
-                else:
-                    if new_item_type == "object":
-                        nested = _diff_schemas(old_items, new_items, current_dtypes, new_dtypes, item_name)
-                        _merge_changes(changes, nested)
+                    # Detect doc changes
+                    if current_field.doc != new_field.doc:
+                        changed.append(FieldChange(
+                            name=path,
+                            current_type=current_field.field_type,
+                            new_type=new_field.field_type,
+                            doc=new_field.doc,
+                            change="doc_changed"
+                        ))
 
-    # Detect removals
-    for prop in old_props:
-        if prop not in new_props:
-            full_name = f"{path}.{prop}" if path else prop
-            if path == "":
-                # Only treat as remove if it's a top-level field
-                changes["remove"].append({"name": full_name})
-            else:
-                # Treat as a type change to the parent field
-                parent_type_from = current_dtypes.get(path, _resolve_struct_type(current_schema))
-                parent_type_to = new_dtypes.get(path, _resolve_struct_type(new_schema))
-                _add_type_change_if_different(changes, path, parent_type_from, parent_type_to)
+                    # Recurse into structs
+                    if (
+                        isinstance(current_field.field_type, StructType) and
+                        isinstance(new_field.field_type, StructType)
+                    ):
+                        _diff_fields(
+                            {f.field_id: f for f in current_field.field_type.fields},
+                            {f.field_id: f for f in new_field.field_type.fields},
+                            parent_path=path
+                        )
 
-    return changes
+            for field_id, current_field in current_fields.items():
+                if field_id not in new_fields:
+                    path = f"{parent_path}.{current_field.name}" if parent_path else current_field.name
+                    removed.append(FieldChange(name=path, current_type=current_field.field_type, doc=current_field.doc, change="removed"))
 
+        _diff_fields(
+            {f.field_id: f for f in current.fields},
+            {f.field_id: f for f in new.fields},
+        )
 
-def diff_schemas(current: Schema, new: Schema) -> SchemaDiff:
-    """
-    Compare two Schema objects and return a SchemaDiff instance.
-    """
-    current_converter = JsonSchemaConverter(current.schema)
-    new_converter = JsonSchemaConverter(new.schema)
-    current_dtypes = current_converter.to_dtypes()
-    new_dtypes = new_converter.to_dtypes()
-    raw = _diff_schemas(current.schema, new.schema, current_dtypes, new_dtypes, "")
+        return SchemaDiff(added=added, removed=removed, changed=changed)
 
-    # Convert added
-    added = []
-    for entry in raw.get("add", []):
-        type_str = entry.get("type")
-        type_obj = parse_sql_type(type_str) if type_str else None
-        added.append(FieldChange(name=entry["name"], new_type=type_obj))
+    def to_evolution_operations(self) -> list[BaseEvolutionOperation]:
+        """
+        Convert this SchemaDiff into a list of evolution operations that can be applied to an Iceberg schema.
+        """
+        ops: list[BaseEvolutionOperation] = []
 
-    # Convert removed
-    removed = []
-    for entry in raw.get("remove", []):
-        type_str = current_dtypes.get(entry["name"])
-        type_obj = parse_sql_type(type_str) if type_str else None
-        removed.append(FieldChange(name=entry["name"], current_type=type_obj))
+        for fc in self.added:
+            ops.append(AddColumn(name=fc.name, new_type=fc.new_type, doc=fc.doc))
 
-    # Convert changed
-    changed = []
-    for entry in raw.get("type_change", []):
-        ct_obj = parse_sql_type(entry.get("type_from")) if entry.get("type_from") else None
-        nt_obj = parse_sql_type(entry.get("type_to")) if entry.get("type_to") else None
-        changed.append(FieldChange(
-            name=entry["name"],
-            current_type=ct_obj,
-            new_type=nt_obj,
-            doc=entry.get("doc"),
-            target=entry.get("target")
-        ))
+        for fc in self.removed:
+            ops.append(DropColumn(name=fc.name))
 
-    return SchemaDiff(added=added, removed=removed, changed=changed)
+        for fc in self.changed:
+            if fc.change == "renamed":
+                ops.append(RenameColumn(name=fc.previous_name or "", target=fc.name))
+            elif fc.change == "type_changed":
+                ops.append(UpdateColumn(name=fc.name, current_type=fc.current_type, new_type=fc.new_type, doc=fc.doc))
+            elif fc.change == "doc_changed":
+                ops.append(UpdateColumn(name=fc.name, current_type=fc.current_type, new_type=fc.new_type, doc=fc.doc))
+            elif fc.change == "moved":
+                ops.append(MoveColumn(name=fc.name, target=fc.relative_to or "", position=fc.position or "after"))
+
+        return ops

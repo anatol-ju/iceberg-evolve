@@ -1,7 +1,11 @@
+import json
 import re
-from uuid import uuid4
+from rich.text import Text
+from rich.tree import Tree
+from pyiceberg.schema import Schema as IcebergSchema
 
 from pyiceberg.types import (
+    BinaryType,
     BooleanType,
     DateType,
     DecimalType,
@@ -18,8 +22,8 @@ from pyiceberg.types import (
     TimestampType
 )
 
-# mapping for primitive types
-_PRIMITIVES = {
+# consolidated mapping for primitive types used in both SQL and JSON parsing
+_PRIMITIVE_TYPES = {
     "string": StringType(),
     "int": IntegerType(),
     "integer": IntegerType(),
@@ -30,8 +34,117 @@ _PRIMITIVES = {
     "boolean": BooleanType(),
     "bool": BooleanType(),
     "date": DateType(),
-    "timestamp": TimestampType()
+    "timestamp": TimestampType(),
+    "binary": BinaryType(),
 }
+
+
+class IcebergSchemaSerializer:
+    @staticmethod
+    def to_dict(schema: IcebergSchema) -> dict:
+        """
+        Serialize an Iceberg Schema object to a dictionary following Iceberg's JSON schema format.
+
+        Args:
+            schema (Schema): The Iceberg schema to serialize.
+
+        Returns:
+            dict: A dictionary representation of the schema suitable for JSON output.
+        """
+        def serialize_field(field: NestedField) -> dict:
+            return {
+                "id": field.field_id,
+                "name": field.name,
+                "required": field.required,
+                "type": serialize_type(field.field_type),
+            }
+
+        def serialize_type(iceberg_type: IcebergType):
+            if isinstance(iceberg_type, StructType):
+                return {
+                    "type": "struct",
+                    "fields": [serialize_field(f) for f in iceberg_type.fields],
+                }
+            elif isinstance(iceberg_type, ListType):
+                return {
+                    "type": "list",
+                    "element-id": iceberg_type.element_id,
+                    "element-required": iceberg_type.element_required,
+                    "element": serialize_type(iceberg_type.element_type),
+                }
+            elif isinstance(iceberg_type, MapType):
+                return {
+                    "type": "map",
+                    "key-id": iceberg_type.key_id,
+                    "key": serialize_type(iceberg_type.key_type),
+                    "value-id": iceberg_type.value_id,
+                    "value-required": iceberg_type.value_required,
+                    "value": serialize_type(iceberg_type.value_type),
+                }
+            elif isinstance(iceberg_type, DecimalType):
+                return f"decimal({iceberg_type.precision}, {iceberg_type.scale})"
+            else:
+                return str(iceberg_type).lower()
+
+        return {
+            "type": "struct",
+            "schema-id": getattr(schema, "schema_id", 0),
+            "fields": [serialize_field(f) for f in schema.fields],
+        }
+
+    @staticmethod
+    def from_dict(data: dict) -> IcebergSchema:
+        """
+        Deserialize a dictionary in Iceberg JSON schema format into a Schema object.
+
+        Args:
+            data (dict): A dictionary representing the Iceberg schema.
+
+        Returns:
+            Schema: A pyiceberg Schema object reconstructed from the input.
+        """
+        def parse_field(field_data: dict) -> NestedField:
+            return NestedField(
+                field_id=field_data["id"],
+                name=field_data["name"],
+                field_type=parse_type(field_data["type"]),
+                required=field_data["required"]
+            )
+
+        def parse_type(type_data):
+            if isinstance(type_data, str):
+                # primitive or decimal string like "decimal(10, 2)"
+                match = re.match(r"decimal\((\d+),\s*(\d+)\)", type_data)
+                if match:
+                    return DecimalType(int(match.group(1)), int(match.group(2)))
+                iceberg_type = _PRIMITIVE_TYPES.get(type_data.lower())
+                if not iceberg_type:
+                    raise ValueError(f"Unsupported primitive type: {type_data}")
+                return iceberg_type
+
+            if isinstance(type_data, dict):
+                iceberg_type = type_data.get("type")
+                if iceberg_type == "struct":
+                    return StructType(*[parse_field(f) for f in type_data["fields"]])
+                if iceberg_type == "list":
+                    return ListType(
+                        element_id=type_data["element-id"],
+                        element_required=type_data["element-required"],
+                        element_type=parse_type(type_data["element"])
+                    )
+                if iceberg_type == "map":
+                    return MapType(
+                        key_id=type_data["key-id"],
+                        key_type=parse_type(type_data["key"]),
+                        value_id=type_data["value-id"],
+                        value_required=type_data["value-required"],
+                        value_type=parse_type(type_data["value"])
+                    )
+            raise ValueError(f"Unsupported type structure: {type_data}.")
+
+        fields = [parse_field(f) for f in data["fields"]]
+        return IcebergSchema(*fields, schema_id=data.get("schema-id", 0))
+
 
 def split_top_level(s: str, sep: str = ",") -> list[str]:
     """
@@ -52,48 +165,32 @@ def split_top_level(s: str, sep: str = ",") -> list[str]:
         parts.append(buf)
     return parts
 
-def parse_sql_type(type_str: str) -> IcebergType:
-    """
-    Parse a SQL-style type string into a PyIceberg IcebergType.
-    Supports:
-      - decimal(p, s)
-      - array<inner>
-      - map<key, value>
-      - struct<field: type, ...>
-      - primitive types (string, int, long, float, double, boolean, date, timestamp)
-    """
+def parse_sql_type_with_ids(type_str: str, allocator: 'IDAllocator') -> IcebergType:
     s = type_str.strip()
     ls = s.lower()
 
-    # decimal(p, s)
     dec = re.match(r"decimal\(\s*(\d+)\s*,\s*(\d+)\s*\)", ls)
     if dec:
         precision, scale = map(int, dec.groups())
         return DecimalType(precision, scale)
 
-    # array<inner>
     if ls.startswith("array<") and ls.endswith(">"):
         inner = s[len("array<"):-1]
-        elem = parse_sql_type(inner)
-        return ListType(element_id=int(uuid4().int % (1 << 31)), element_type=elem)
+        elem = parse_sql_type_with_ids(inner, allocator)
+        return ListType(element_id=allocator.next(), element_type=elem)
 
-    # map<key, value>
     if ls.startswith("map<") and ls.endswith(">"):
         inner = s[len("map<"):-1]
         key_str, val_str = split_top_level(inner, sep=",")
-        key = parse_sql_type(key_str.strip())
-        val = parse_sql_type(val_str.strip())
-        # generate unique IDs for key and value
-        key_id = int(uuid4().int % (1 << 31))
-        value_id = int(uuid4().int % (1 << 31))
+        key = parse_sql_type_with_ids(key_str.strip(), allocator)
+        val = parse_sql_type_with_ids(val_str.strip(), allocator)
         return MapType(
-            key_id=key_id,
+            key_id=allocator.next(),
             key_type=key,
-            value_id=value_id,
+            value_id=allocator.next(),
             value_type=val
         )
 
-    # struct<...>
     if ls.startswith("struct<") and ls.endswith(">"):
         inner = s[len("struct<"):-1]
         field_specs = split_top_level(inner, sep=",")
@@ -101,19 +198,22 @@ def parse_sql_type(type_str: str) -> IcebergType:
         for spec in field_specs:
             name, typ = spec.split(":", 1)
             fields.append(NestedField(
-                field_id=int(uuid4().int % (1 << 31)),
+                field_id=allocator.next(),
                 name=name.strip(),
-                field_type=parse_sql_type(typ.strip()),
+                field_type=parse_sql_type_with_ids(typ.strip(), allocator),
                 required=False
             ))
         return StructType(*fields)
 
-    # primitive
-    prim = _PRIMITIVES.get(ls)
+    prim = _PRIMITIVE_TYPES.get(ls)
     if prim is not None:
         return prim
 
     raise ValueError(f"Unsupported type string '{type_str}'")
+
+# Updated existing function to maintain interface compatibility
+def parse_sql_type(type_str: str) -> IcebergType:
+    return parse_sql_type_with_ids(type_str, allocator=IDAllocator())
 
 def is_narrower_than(first: IcebergType, second: IcebergType) -> bool:
     """
@@ -140,7 +240,7 @@ def clean_type_str(typ: IcebergType) -> str:
     Useful for display or serialization where IDs are internal noise.
     """
     if isinstance(typ, ListType):
-        return f"array<{clean_type_str(typ.element_type)}>"
+        return f"list<{clean_type_str(typ.element_type)}>"
     elif isinstance(typ, MapType):
         return f"map<{clean_type_str(typ.key_type)}, {clean_type_str(typ.value_type)}>"
     elif isinstance(typ, StructType):
@@ -151,3 +251,193 @@ def clean_type_str(typ: IcebergType) -> str:
         return f"struct<{', '.join(parts)}>"
     else:
         return str(typ).lower()
+
+class IDAllocator:
+    def __init__(self):
+        self.counter = 1
+
+    def next(self) -> int:
+        val = self.counter
+        self.counter += 1
+        return val
+
+def convert_json_to_iceberg_field(
+    name: str,
+    spec: dict,
+    allocator: IDAllocator,
+    required_fields: set[str],
+) -> NestedField:
+    """
+    Convert a JSON schema field spec to an Iceberg NestedField.
+    Handles primitive types, arrays, maps, and nested structs.
+
+    Args:
+        name (str): The name of the field.
+        spec (dict): The JSON schema specification for the field (contains 'properties', 'type', 'items').
+        allocator (IDAllocator): An IDAllocator instance to assign field IDs.
+        required_fields (set[str]): Set of required field names for ID allocation.
+
+    Returns:
+        NestedField: The corresponding Iceberg NestedField.
+    """
+    json_type = spec.get("type")
+    field_id = allocator.next()
+    required = name in required_fields
+
+    if json_type == "object":
+        props = spec.get("properties", {})
+        fields = [
+            convert_json_to_iceberg_field(child_name, child_spec, allocator, required_fields)
+            for child_name, child_spec in props.items()
+        ]
+        return NestedField(
+            field_id=field_id,
+            name=name,
+            field_type=StructType(*fields),
+            required=required
+        )
+
+    elif json_type == "array":
+        items = spec.get("items")
+        if not isinstance(items, dict):
+            raise ValueError(f"Array field '{name}' must have 'items' defined.")
+        element_field = convert_json_to_iceberg_field(name + "_element", items, allocator, required_fields)
+        return NestedField(
+            field_id=field_id,
+            name=name,
+            field_type=ListType(
+                element_id=allocator.next(),
+                element_type=element_field.field_type,
+                element_required=True  # assume required
+            ),
+            required=required
+        )
+
+    elif json_type == "map":
+        props = spec.get("properties", {})
+        key_spec = props.get("key")
+        val_spec = props.get("value")
+        if not key_spec or not val_spec:
+            raise ValueError(f"Map field '{name}' must have 'key' and 'value' under 'properties'.")
+        key_type = _PRIMITIVE_TYPES[key_spec["type"]]
+        value_field = convert_json_to_iceberg_field(name + "_value", val_spec, allocator, required_fields)
+        return NestedField(
+            field_id=field_id,
+            name=name,
+            field_type=MapType(
+                key_id=allocator.next(),
+                key_type=key_type,
+                value_id=allocator.next(),
+                value_type=value_field.field_type,
+                value_required=True
+            ),
+            required=required
+        )
+
+    else:
+        iceberg_type = _PRIMITIVE_TYPES.get(json_type)
+        if iceberg_type is None:
+            raise ValueError(f"Unsupported primitive type '{json_type}' in JSON schema.")
+        return NestedField(
+            field_id=field_id,
+            name=name,
+            field_type=iceberg_type,
+            required=required
+        )
+
+def _type_to_tree(field_type: IcebergType, label: str | None = None, use_color: bool = False) -> Tree:
+    """
+    Convert an IcebergType to a rich Tree representation.
+
+    Args:
+        field_type (IcebergType): The Iceberg type to convert.
+        label (str | None): Optional label for the root node.
+        use_color (bool): Whether to apply color styling.
+
+    Returns:
+        Tree: A rich Tree object representing the type tree.
+    """
+    root = Tree(f"{label}:" if label else "")
+
+    def _render_type(node: Tree, t: IcebergType):
+        if isinstance(t, (StringType, IntegerType, LongType, FloatType, DoubleType, BooleanType, DateType, TimestampType, BinaryType, DecimalType)):
+            text = Text(clean_type_str(t), style="bold green" if use_color else None)
+            node.add(text)
+        elif isinstance(t, StructType):
+            struct_node = node.add(Text("struct", style="bold blue" if use_color else None))
+            for f in t.fields:
+                optional = "optional " if not f.required else ""
+                child_node = struct_node.add(f"{f.name}: {optional}{clean_type_str(f.field_type)}")
+                _render_type(child_node, f.field_type)
+        elif isinstance(t, ListType):
+            list_node = node.add(Text("list", style="bold magenta" if use_color else None))
+            element_node = list_node.add("element:")
+            _render_type(element_node, t.element_type)
+        elif isinstance(t, MapType):
+            map_node = node.add(Text("map", style="bold cyan" if use_color else None))
+            key_node = map_node.add("key:")
+            _render_type(key_node, t.key_type)
+            value_node = map_node.add("value:")
+            _render_type(value_node, t.value_type)
+        else:
+            text = Text(clean_type_str(t), style="bold red" if use_color else None)
+            node.add(text)
+
+    _render_type(root, field_type)
+    return root
+
+def render_type(node: Tree, tp: IcebergType):
+    """
+    Render an IcebergType into a rich Tree structure, adding nodes for each field and type.
+
+    Args:
+        node (Tree): The root Tree node to add the type structure to.
+        tp (IcebergType): The Iceberg type to render.
+    """
+    if isinstance(tp, StructType):
+        for field in tp.fields:
+            required = "required" if field.required else ""
+            field_type = field.field_type
+            # Only render primitive types as a single line and continue
+            if not isinstance(field_type, (StructType, ListType, MapType)):
+                node.add(f"{field.name}: {str(field_type)}{(' ' + required) if required else ''}")
+                continue
+            if isinstance(field_type, StructType):
+                child = node.add(f"{field.name}: struct{(' ' + required) if required else ''}")
+                render_type(child, field_type)
+            elif isinstance(field_type, ListType):
+                elem_type = field_type.element_type
+                if isinstance(elem_type, StructType):
+                    list_node = node.add(f"{field.name}: list<struct>{(' ' + required) if required else ''}")
+                    render_type(list_node, elem_type)
+                else:
+                    node.add(f"{field.name}: list<{str(elem_type)}>{(' ' + required) if required else ''}")
+            elif isinstance(field_type, MapType):
+                map_node = node.add(f"{field.name}: map{(' ' + required) if required else ''}")
+                key_node = map_node.add("key")
+                render_type(key_node, field_type.key_type)
+                value_node = map_node.add("value")
+                render_type(value_node, field_type.value_type)
+    elif isinstance(tp, ListType):
+        # If required/optional annotation is added later, it should go after the type as well.
+        tree = node.add("list<struct>" if isinstance(tp.element_type, StructType) else f"list<{str(tp.element_type)}>")
+        if isinstance(tp.element_type, StructType):
+            render_type(tree, tp.element_type)
+    elif isinstance(tp, MapType):
+        map_node = node.add("map")
+        key_node = map_node.add("key")
+        render_type(key_node, tp.key_type)
+        value_node = map_node.add("value")
+        render_type(value_node, tp.value_type)
+    else:
+        node.add(str(tp))
+
+
+def type_to_tree(label: str, tp: IcebergType) -> Tree:
+    if not isinstance(tp, (StructType, ListType, MapType)):
+        return Tree(f"{label}: {clean_type_str(tp)}")
+
+    root_label = f"{label}: list" if isinstance(tp, ListType) else f"{label}: struct" if isinstance(tp, StructType) else f"{label}: {str(tp)}"
+    root = Tree(root_label)
+    render_type(root, tp)
+    return root

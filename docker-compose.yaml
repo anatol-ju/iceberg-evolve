@@ -1,0 +1,80 @@
+services:
+  hive-metastore:
+    container_name: hive-metastore
+    image: apache/hive:3.1.3
+    platform: linux/amd64
+    environment:
+      - SERVICE_NAME=metastore
+      - DB_TYPE=postgres
+      - HIVE_METASTORE_DB_TYPE=postgres
+      - HIVE_METASTORE_DB_HOST=postgres
+    ports:
+      - "9083:9083"
+    depends_on:
+      - postgres
+
+  postgres:
+    container_name: postgres
+    image: postgres:13
+    environment:
+      POSTGRES_DB: metastore
+      POSTGRES_USER: hive
+      POSTGRES_PASSWORD: hive
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./pg-data:/var/lib/postgresql/data
+
+  minio:
+    container_name: minio
+    platform: linux/amd64
+    image: minio/minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: minio123
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - ./minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  minio-init:
+    container_name: minio-init
+    image: minio/mc
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+        mc alias set local http://minio:9000 minio minio123 &&
+        mc mb local/warehouse --ignore-existing
+      "
+    restart: "no"
+
+  runner:
+    container_name: runner
+    build:
+      context: .
+      dockerfile: runner.Dockerfile
+    volumes:
+      - .:/app
+      #- ./pyiceberg.yaml:/root/.pyiceberg/config.yaml:ro
+      - ./tests/integration.py:/app/tests/integration.py
+    depends_on:
+      - hive-metastore
+      - minio
+    environment:
+      PYICEBERG_CATALOG__HIVE__TYPE: hive
+      PYICEBERG_CATALOG__HIVE__URI: thrift://hive-metastore:9083
+      PYICEBERG_CATALOG__HIVE__WAREHOUSE: s3a://warehouse/
+      AWS_ACCESS_KEY_ID: minio
+      AWS_SECRET_ACCESS_KEY: minio123
+      AWS_REGION: us-east-1
+      PYICEBERG_WAREHOUSE: s3a://warehouse/
+    command: ["tail", "-f", "/dev/null"]

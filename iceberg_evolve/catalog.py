@@ -34,7 +34,7 @@ def load_table_schema(table_name: str, catalog_name: str = "default", config: di
     for field in table.schema().fields:
         json_type = iceberg_type_to_json_type(str(field.field_type))
         properties[field.name] = {"type": json_type}
-        if not field.is_optional:
+        if not field.optional:
             required.append(field.name)
 
     return {

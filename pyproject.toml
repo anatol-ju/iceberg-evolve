@@ -5,13 +5,13 @@ description = "Schema diffing and evolution tool for Iceberg and beyond."
 authors = [
     {name = "Anatol Jurenkow", email = "azurius@t-online.de"}
 ]
-license = {text = "GNU GPLv3"}
+
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "pyiceberg (>=0.9.1,<1.0.0)",
+    "pyiceberg[glue,hive,sql-postgres,sql-sqlite,pyarrow,s3fs] (>=0.9.1,<1.0.0)",
     "schemaworks (>=1.1.0,<2.0.0)",
-    "boto3 (>=1.39.4,<2.0.0)",
+    "boto3 (>=1.34.0,<2.0.0)",
     "rich (>=10.11.0,<14.0.0)"
 ]
 keywords = ["iceberg", "schema", "evolution", "data-engineering"]
@@ -48,6 +48,11 @@ omit = [
 
 [tool.poetry.group.dev.dependencies]
 pre-commit = "^4.2.0"
+
+[tool.poetry]
+packages = [
+    { include = "iceberg_evolve", from = "." }
+]
 
 [project.scripts]
 example = "examples.evolve_test:main"
