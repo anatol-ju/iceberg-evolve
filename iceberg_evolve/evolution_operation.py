@@ -1,11 +1,11 @@
 from dataclasses import dataclass
 
 from pyiceberg.table.update.schema import UpdateSchema
-from pyiceberg.types import IcebergType
+from pyiceberg.types import IcebergType, StructType, ListType
 from rich.console import Console
-from rich.text import Text
+from rich.tree import Tree
 
-from iceberg_evolve.utils import clean_type_str, is_narrower_than
+from iceberg_evolve.utils import clean_type_str, is_narrower_than, type_to_tree
 
 
 @dataclass
@@ -19,7 +19,7 @@ class BaseEvolutionOperation:
     def to_serializable_dict(self) -> dict:
         raise NotImplementedError
 
-    def pretty(self, use_color: bool = False) -> Text:
+    def pretty(self, use_color: bool = False) -> Tree:
         raise NotImplementedError
 
     def apply(self, update: UpdateSchema) -> None:
@@ -28,16 +28,9 @@ class BaseEvolutionOperation:
     def is_breaking(self) -> bool:
         return False
 
-    def display(self, use_color: bool = True, console: Console | None = None) -> None:
-        """
-        Print the pretty representation to the console.
-
-        Args:
-            use_color (bool): Whether to apply color styling.
-            console (Console | None): Optional rich Console instance.
-        """
-        console = console or Console()
-        console.print(self.pretty(use_color=use_color))
+    def display(self, console: Console | None = None) -> None:
+        from iceberg_evolve.renderer import EvolutionOperationsRenderer
+        EvolutionOperationsRenderer([self], console).display()
 
 
 @dataclass
@@ -65,20 +58,14 @@ class AddColumn(BaseEvolutionOperation):
             **({"doc": self.doc} if self.doc else {}),
         }
 
-    def pretty(self, use_color: bool = False) -> Text:
-        """
-        Generate a pretty representation of the operation.
-
-        Args:
-            use_color (bool): Whether to apply color styling.
-
-        Returns:
-            Text: A rich Text object representing the operation.
-        """
-        label = "ADD"
-        style = "green bold" if use_color else None
-        body = f"  {self.name}: {clean_type_str(self.new_type)}"
-        return Text.assemble((f"\n{label}\n", style), body)
+    def pretty(self, use_color: bool = False) -> Tree:
+        if use_color:
+            label = "[green bold]ADD[/green bold]"
+        else:
+            label = "ADD"
+        tree = Tree(label)
+        tree.add(f"[green3]+ {self.name}[/green3]: {clean_type_str(self.new_type)}")
+        return tree
 
     def apply(self, update: UpdateSchema) -> None:
         """
@@ -109,20 +96,14 @@ class DropColumn(BaseEvolutionOperation):
             "name": self.name
         }
 
-    def pretty(self, use_color: bool = False) -> Text:
-        """
-        Generate a pretty representation of the drop column operation.
-
-        Args:
-            use_color (bool): Whether to apply color styling.
-
-        Returns:
-            Text: A rich Text object representing the operation.
-        """
-        label = "DROP"
-        style = "red bold" if use_color else None
-        body = f"  {self.name}"
-        return Text.assemble((f"\n{label}\n", style), body)
+    def pretty(self, use_color: bool = False) -> Tree:
+        if use_color:
+            label = "[red bold]DROP[/red bold]"
+        else:
+            label = "DROP"
+        tree = Tree(label)
+        tree.add(f"[red]- {self.name}[/red]")
+        return tree
 
     def apply(self, update: UpdateSchema) -> None:
         """
@@ -173,20 +154,26 @@ class UpdateColumn(BaseEvolutionOperation):
             **({"doc": self.doc} if self.doc else {}),
         }
 
-    def pretty(self, use_color: bool = False) -> Text:
-        """
-        Generate a pretty representation of the update column operation.
-
-        Args:
-            use_color (bool): Whether to apply color styling.
-
-        Returns:
-            Text: A rich Text object representing the operation.
-        """
-        label = "UPDATE"
-        style = "yellow bold" if use_color else None
-        body = f"  {self.name}\n  from: {clean_type_str(self.current_type)}\n    to: {clean_type_str(self.new_type)}"
-        return Text.assemble((f"\n{label}\n", style), body)
+    def pretty(self, use_color: bool = False) -> Tree:
+        if use_color:
+            label = "[yellow bold]UPDATE[/yellow bold]"
+        else:
+            label = "UPDATE"
+        tree = Tree(label)
+        node = tree.add(f"[yellow]~ {self.name}[/yellow]:")
+        # from
+        ct = self.current_type
+        if isinstance(ct, StructType) or (isinstance(ct, ListType) and isinstance(ct.element_type, StructType)):
+            node.add(type_to_tree("from", ct))
+        else:
+            node.add(f"from: {clean_type_str(ct)}")
+        # to
+        nt = self.new_type
+        if isinstance(nt, StructType) or (isinstance(nt, ListType) and isinstance(nt.element_type, StructType)):
+            node.add(type_to_tree("to", nt))
+        else:
+            node.add(f"to: {clean_type_str(nt)}")
+        return tree
 
     def apply(self, update: UpdateSchema) -> None:
         """
@@ -231,20 +218,15 @@ class RenameColumn(BaseEvolutionOperation):
             "to": self.target,
         }
 
-    def pretty(self, use_color: bool = False) -> Text:
-        """
-        Generate a pretty representation of the rename column operation.
-
-        Args:
-            use_color (bool): Whether to apply color styling.
-
-        Returns:
-            Text: A rich Text object representing the operation.
-        """
-        label = "RENAME"
-        style = "cyan bold" if use_color else None
-        body = f"  {self.name}\n  to: {self.target}"
-        return Text.assemble((f"\n{label}\n", style), body)
+    def pretty(self, use_color: bool = False) -> Tree:
+        if use_color:
+            label = "[cyan bold]RENAME[/cyan bold]"
+        else:
+            label = "RENAME"
+        tree = Tree(label)
+        subtree = tree.add(f"[cyan1]~ {self.name}[/cyan1]")
+        subtree.add(f"to: {self.target}")
+        return tree
 
     def apply(self, update: UpdateSchema) -> None:
         """
@@ -282,20 +264,16 @@ class MoveColumn(BaseEvolutionOperation):
             "target": self.target,
         }
 
-    def pretty(self, use_color: bool = False) -> Text:
-        """
-        Generate a pretty representation of the move column operation.
-
-        Args:
-            use_color (bool): Whether to apply color styling.
-
-        Returns:
-            Text: A rich Text object representing the operation.
-        """
-        label = "MOVE"
-        style = "magenta bold" if use_color else None
-        body = f"  from: {self.name} ({self.position})\n   of: {self.target}"
-        return Text.assemble((f"\n{label}\n", style), body)
+    def pretty(self, use_color: bool = False) -> Tree:
+        if use_color:
+            label = "[magenta bold]MOVE[/magenta bold]"
+        else:
+            label = "MOVE"
+        tree = Tree(label)
+        subtree = tree.add(f"[magenta3]~ {self.name}[/magenta3]")
+        subtree.add(f"from: {self.position}")
+        subtree.add(f"of: {self.target}")
+        return tree
 
     def apply(self, update: UpdateSchema) -> None:
         """
@@ -333,20 +311,15 @@ class UnionSchema(BaseEvolutionOperation):
             "with": clean_type_str(self.new_type),
         }
 
-    def pretty(self, use_color: bool = False) -> Text:
-        """
-        Generate a pretty representation of the union schema operation.
-
-        Args:
-            use_color (bool): Whether to apply color styling.
-
-        Returns:
-            Text: A rich Text object representing the operation.
-        """
-        label = "UNION SCHEMA"
-        style = "blue bold" if use_color else None
-        body = f"  with type: {clean_type_str(self.new_type)}"
-        return Text.assemble((f"\n{label}\n", style), body)
+    def pretty(self, use_color: bool = False) -> Tree:
+        if use_color:
+            label = "[blue bold]UNION SCHEMA[/blue bold]"
+        else:
+            label = "UNION SCHEMA"
+        tree = Tree(label)
+        subtree = tree.add(f"[blue3]~ {self.name}[/blue3]:")
+        subtree.add(f"with type: {clean_type_str(self.new_type)}")
+        return tree
 
     def apply(self, update: UpdateSchema) -> None:
         """

@@ -1,12 +1,17 @@
-# iceberg_evolve/renderer.py
-
-from rich.console import Group, Console
-from rich.tree import Tree
+from pyiceberg.types import ListType, StructType
+from rich.console import Console, Group
 from rich.text import Text
+from rich.tree import Tree
 
-from iceberg_evolve.diff import SchemaDiff, FieldChange
+from iceberg_evolve.diff import FieldChange, SchemaDiff
+from iceberg_evolve.evolution_operation import (
+    AddColumn,
+    DropColumn,
+    RenameColumn,
+    UpdateColumn,
+)
 from iceberg_evolve.utils import clean_type_str
-from pyiceberg.types import StructType, ListType, MapType
+
 
 class SchemaDiffRenderer:
     def __init__(self, diff: SchemaDiff, console: Console | None = None):
@@ -58,22 +63,32 @@ class SchemaDiffRenderer:
 
         # root label: e.g. "+ id: int"
         if section == "added":
-            label = f"{symbol} {change.name}: {clean_type_str(change.new_type)}"
+            label = f"[{color}]{symbol} {change.name}[/{color}]: {clean_type_str(change.new_type)}"
         elif section == "removed":
-            label = f"{symbol} {change.name}"
+            label = f"[{color}]{symbol} {change.name}[/{color}]"
         else:  # changed
-            label = f"{symbol} {change.previous_name or change.name}"
-        node = Tree(f"[{color}]{label}[/{color}]")
+            label = f"[{color}]{symbol} {change.previous_name or change.name}[/{color}]"
+        node = Tree(label)
 
         # now drill into the specific change kind
         if change.change == "renamed":
             node.add(f"renamed to: [yellow1]{change.name}[/yellow1]")
         elif change.change == "type_changed":
-            from_node = node.add("from:")
-            self._walk_and_color(from_node, change.current_type, side="from", base=change.name)
+            # Render 'from'
+            ct = change.current_type
+            if isinstance(ct, StructType) or (isinstance(ct, ListType) and isinstance(ct.element_type, StructType)):
+                from_node = node.add("from:")
+                self._walk_and_color(from_node, ct, side="from", base=change.name)
+            else:
+                node.add(f"from: {clean_type_str(ct)}")
 
-            to_node   = node.add("to:")
-            self._walk_and_color(to_node,   change.new_type,   side="to",   base=change.name)
+            # Render 'to'
+            nt = change.new_type
+            if isinstance(nt, StructType) or (isinstance(nt, ListType) and isinstance(nt.element_type, StructType)):
+                to_node = node.add("to:")
+                self._walk_and_color(to_node, nt, side="to", base=change.name)
+            else:
+                node.add(f"to: {clean_type_str(nt)}")
         # … handle doc_changed, moved similarly …
 
         return node
@@ -86,6 +101,7 @@ class SchemaDiffRenderer:
         if isinstance(typ, StructType):
             for f in typ.fields:
                 path = f"{base}.{f.name}"
+                required_str = " required" if f.required else ""
                 style = None
                 if side == "from" and any(c.name == path and c.change == "removed" for c in self.diff.removed):
                     style = "red"
@@ -97,23 +113,50 @@ class SchemaDiffRenderer:
                 field_type = f.field_type
                 # StructType field
                 if isinstance(field_type, StructType):
-                    lbl = f"{f.name}: struct"
+                    lbl = f"{f.name}: struct{required_str}"
                     child = tree.add(f"[{style}]{lbl}[/{style}]" if style else lbl)
                     self._walk_and_color(child, field_type, side, path)
                 # ListType of StructType
                 elif isinstance(field_type, ListType) and isinstance(field_type.element_type, StructType):
-                    lbl = f"{f.name}: list<struct>"
+                    lbl = f"{f.name}: list<struct>{required_str}"
                     child = tree.add(f"[{style}]{lbl}[/{style}]" if style else lbl)
                     self._walk_and_color(child, field_type.element_type, side, path)
                 # ListType of primitive
                 elif isinstance(field_type, ListType):
                     elem = field_type.element_type
-                    lbl = f"{f.name}: list<{clean_type_str(elem)}>"
+                    lbl = f"{f.name}: list<{clean_type_str(elem)}>{required_str}"
                     tree.add(f"[{style}]{lbl}[/{style}]" if style else lbl)
                 # Primitive or other types
                 else:
-                    lbl = f"{f.name}: {clean_type_str(field_type)}"
+                    lbl = f"{f.name}: {clean_type_str(field_type)}{required_str}"
                     tree.add(f"[{style}]{lbl}[/{style}]" if style else lbl)
         else:
             # leaf: primitive or list<int>, just inline
             tree.add(clean_type_str(typ))
+
+
+class EvolutionOperationsRenderer:
+    def __init__(self, ops, console: Console | None = None):
+        self.ops = [op for op in ops if "." not in op.name]  # filter nested
+        self.console = console or Console()
+
+    def display(self) -> None:
+        """
+        Render evolution operations with nested colored diffs for UpdateColumn.
+        """
+        prev_type = None
+
+        for op in self.ops:
+            current_type = type(op)
+            # blank line between different operation types
+            if prev_type and current_type is not prev_type:
+                self.console.print()
+            prev_type = current_type
+
+            # Print the operation tree
+            self.console.print(op.pretty(use_color=True))
+
+            # For UpdateColumn, display nested SchemaDiff tree
+            if isinstance(op, UpdateColumn) and getattr(op, "nested_changes", None):
+                diff = SchemaDiff(added=[], removed=[], changed=op.nested_changes)
+                SchemaDiffRenderer(diff, self.console).display()
