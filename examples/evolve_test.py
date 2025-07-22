@@ -5,7 +5,6 @@ from pyiceberg.schema import Schema
 
 from iceberg_evolve.diff import SchemaDiff
 from iceberg_evolve.utils import IcebergSchemaSerializer
-from iceberg_evolve.renderer import EvolutionOperationsRenderer
 
 
 def load_schema(path: str) -> Schema:

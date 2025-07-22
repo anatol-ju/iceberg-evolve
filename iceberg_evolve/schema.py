@@ -51,115 +51,59 @@ Examples:
         }
     )
 """
+from iceberg_evolve.utils import IcebergSchemaSerializer
 from pyiceberg.schema import Schema as IcebergSchema
-from pyiceberg.types import StructType, NestedField
 import json
-from schemaworks import JsonSchemaConverter
 
 class Schema:
-    def __init__(self, schema: dict):
-        self.schema = schema
-        self.normalize_fields()
+    """
+    Wrapper for a PyIceberg Schema object.
+    """
+    def __init__(self, iceberg_schema: IcebergSchema):
+        self.iceberg_schema = iceberg_schema
 
     @property
     def fields(self):
-        return self.schema.get("properties", {})
-
-    def normalize_fields(self):
         """
-        Normalize field names to lowercase and ensure they have 'name' and 'type'.
+        Return the list of NestedField objects in this schema.
         """
-        normalized = {}
-        for name, spec in self.fields.items():
-            if "type" not in spec:
-                raise ValueError(f"Field '{name}' is missing a type")
-            normalized[name.lower()] = spec
-        self.schema["properties"] = dict(normalized.items())
+        return self.iceberg_schema.fields
 
     def __repr__(self):
-        converter = JsonSchemaConverter(self.schema)
-        dtypes = converter.to_dtypes(to_lower=True)
-        return f"Schema({dtypes})"
+        return f"IcebergSchema({self.iceberg_schema})"
 
     @classmethod
-    def from_file(cls, path: str):
+    def from_file(cls, path: str) -> "Schema":
         """
         Load schema from a JSON file.
-
-        Args:
-            path (str): The path to the JSON file containing the schema.
-
-        Returns:
-            Schema: An instance of the Schema class with the loaded schema.
-
-        Raises:
-            FileNotFoundError: If the file does not exist.
-            json.JSONDecodeError: If the file is not a valid JSON.
         """
         if not path.lower().endswith(".json"):
-            raise ValueError("Currently, only JSON files are supported for schema loading.")
-
+            raise ValueError("Only JSON schema files are supported.")
         with open(path) as f:
             data = json.load(f)
-        return cls(schema=data)
+        iceberg_schema = IcebergSchemaSerializer.from_dict(data)
+        return cls(iceberg_schema)
 
     @classmethod
-    def from_iceberg(cls, table_name: str, catalog: str = "glue", config: dict = None):
+    def from_iceberg(cls, table_name: str, catalog: str = "glue", config: dict = None) -> "Schema":
         """
         Load schema from an Iceberg table in a catalog.
-
-        Args:
-            table_name (str): The name of the Iceberg table.
-            catalog (str): The name of the Iceberg catalog. Defaults to "glue".
-            config (dict): Optional catalog configuration overrides.
-
-        Returns:
-            Schema: An instance of the Schema class with the loaded schema.
         """
         from iceberg_evolve.catalog import load_table_schema
-        schema = load_table_schema(table_name, catalog, config)
-        return cls(schema=schema)
+        data = load_table_schema(table_name, catalog, config)
+        iceberg_schema = IcebergSchemaSerializer.from_dict(data)
+        return cls(iceberg_schema)
 
     @classmethod
-    def from_s3(cls, bucket: str, key: str):
+    def from_s3(cls, bucket: str, key: str) -> "Schema":
         """
         Load schema from an S3 bucket.
-
-        Args:
-            bucket (str): The name of the S3 bucket.
-            key (str): The S3 key for the schema file.
-
-        Returns:
-            Schema: An instance of the Schema class with the loaded schema.
-
-        Raises:
-            boto3.exceptions.S3UploadFailedError: If the S3 object cannot be accessed.
-            json.JSONDecodeError: If the S3 object is not a valid JSON.
         """
         if not key.lower().endswith(".json"):
-            raise ValueError("Currently, only JSON files are supported for schema loading from S3.")
-
+            raise ValueError("Only JSON schema files are supported for schema loading from S3.")
         import boto3
         s3 = boto3.resource("s3")
         obj = s3.Object(bucket, key)
         data = json.loads(obj.get()["Body"].read().decode("utf-8"))
-        return cls(schema=data)
-
-
-    def to_iceberg_schema(self) -> IcebergSchema:
-        """
-        Convert the loaded JSON Schema into a PyIceberg Schema with stable incremental field IDs.
-        Supports nested structs, arrays, and maps.
-
-        Returns:
-            IcebergSchema: A schema object with field IDs assigned recursively.
-        """
-        from iceberg_evolve.utils import IDAllocator, convert_json_to_iceberg_field
-
-        allocator = IDAllocator()
-        required_fields = set(self.schema.get("required", []))
-        top_fields = [
-            convert_json_to_iceberg_field(name, spec, allocator, required_fields)
-            for name, spec in self.fields.items()
-        ]
-        return IcebergSchema(*top_fields)
+        iceberg_schema = IcebergSchemaSerializer.from_dict(data)
+        return cls(iceberg_schema)

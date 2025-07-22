@@ -1,4 +1,5 @@
 import pytest
+from pyiceberg.schema import Schema as IcebergSchema
 from pyiceberg.types import (
     BooleanType,
     DateType,
@@ -14,11 +15,16 @@ from pyiceberg.types import (
     StructType,
     TimestampType
 )
+from rich.tree import Tree
 
 from iceberg_evolve.utils import (
+    IcebergSchemaSerializer,
+    IDAllocator,
     clean_type_str,
+    convert_json_to_iceberg_field,
     is_narrower_than,
     parse_sql_type,
+    render_type,
     split_top_level
 )
 
@@ -140,7 +146,7 @@ def test_clean_type_str_primitive():
 def test_clean_type_str_list():
     """Test clean_type_str formats Iceberg ListType correctly with nested type string."""
     t = ListType(element_id=1, element_type=StringType())
-    assert clean_type_str(t) == "array<string>"
+    assert clean_type_str(t) == "list<string>"
 
 def test_clean_type_str_map():
     """Test clean_type_str formats Iceberg MapType with key/value type strings."""
@@ -158,3 +164,379 @@ def test_clean_type_str_struct():
     ]
     t = StructType(*fields)
     assert clean_type_str(t) == "struct<name: string, age: optional int>"
+
+
+
+def test_iceberg_schema_serializer_to_dict_and_from_dict_roundtrip():
+    """Test that serializing and deserializing an Iceberg schema returns an equivalent schema."""
+    original_schema = StructType(
+        NestedField(field_id=1, name="name", field_type=StringType(), required=True),
+        NestedField(field_id=2, name="age", field_type=IntegerType(), required=False),
+        NestedField(
+            field_id=3,
+            name="tags",
+            field_type=ListType(element_id=4, element_type=StringType(), element_required=True),
+            required=False
+        ),
+        NestedField(
+            field_id=5,
+            name="properties",
+            field_type=MapType(
+                key_id=6,
+                key_type=StringType(),
+                value_id=7,
+                value_type=IntegerType(),
+                value_required=True
+            ),
+            required=False
+        )
+    )
+    iceberg_schema = IcebergSchema(*original_schema.fields, schema_id=42)
+
+    serialized = IcebergSchemaSerializer.to_dict(iceberg_schema)
+    assert serialized["schema-id"] == 42
+    assert serialized["type"] == "struct"
+    assert len(serialized["fields"]) == 4
+
+    deserialized = IcebergSchemaSerializer.from_dict(serialized)
+    assert isinstance(deserialized, IcebergSchema)
+    assert len(deserialized.fields) == 4
+    assert deserialized.schema_id == 42
+
+
+def test_iceberg_schema_serializer_nested_struct():
+    """Test that nested StructTypes are correctly serialized and deserialized."""
+    nested_struct = StructType(
+        NestedField(field_id=2, name="id", field_type=IntegerType(), required=True),
+        NestedField(field_id=3, name="flag", field_type=BooleanType(), required=False)
+    )
+    schema = IcebergSchema(
+        NestedField(field_id=1, name="user", field_type=nested_struct, required=True)
+    )
+    serialized = IcebergSchemaSerializer.to_dict(schema)
+    assert serialized["fields"][0]["name"] == "user"
+    inner = serialized["fields"][0]["type"]
+    assert inner["type"] == "struct"
+    assert len(inner["fields"]) == 2
+
+    deserialized = IcebergSchemaSerializer.from_dict(serialized)
+    user_field = deserialized.find_field("user")
+    assert isinstance(user_field.field_type, StructType)
+    assert len(user_field.field_type.fields) == 2
+
+
+def test_iceberg_schema_serializer_decimal_string_format():
+    """Test that decimal types are serialized as strings and parsed back correctly."""
+    schema = IcebergSchema(
+        NestedField(field_id=1, name="amount", field_type=DecimalType(10, 2), required=True)
+    )
+    serialized = IcebergSchemaSerializer.to_dict(schema)
+    field_type = serialized["fields"][0]["type"]
+    assert field_type == "decimal(10, 2)"
+
+    deserialized = IcebergSchemaSerializer.from_dict(serialized)
+    assert isinstance(deserialized.fields[0].field_type, DecimalType)
+    assert deserialized.fields[0].field_type.precision == 10
+    assert deserialized.fields[0].field_type.scale == 2
+
+
+def test_iceberg_schema_serializer_invalid_type_string():
+    """Test that unsupported primitive type strings raise ValueError during deserialization."""
+    invalid_dict = {
+        "type": "struct",
+        "schema-id": 1,
+        "fields": [
+            {"id": 1, "name": "foo", "type": "unsupported", "required": True}
+        ]
+    }
+    with pytest.raises(ValueError, match="Unsupported primitive type"):
+        IcebergSchemaSerializer.from_dict(invalid_dict)
+
+
+def test_iceberg_schema_serializer_invalid_type_structure():
+    """Test that non-string and non-dict types raise ValueError during deserialization."""
+    invalid_dict = {
+        "type": "struct",
+        "fields": [
+            {"id": 1, "name": "foo", "type": 123, "required": True}
+        ]
+    }
+    with pytest.raises(ValueError, match="Unsupported type structure"):
+        IcebergSchemaSerializer.from_dict(invalid_dict)
+
+
+
+def test_object_with_properties():
+    """Test converting a JSON object with nested properties to StructType."""
+    spec = {
+        "type": "object",
+        "properties": {
+            "name": {"type": "string"},
+            "age": {"type": "integer"}
+        }
+    }
+    field = convert_json_to_iceberg_field("user", spec, IDAllocator(), required_fields={"user"})
+    assert field.name == "user"
+    assert isinstance(field.field_type, StructType)
+    assert len(field.field_type.fields) == 2
+
+
+def test_object_with_additional_properties():
+    """Test converting a JSON object with additionalProperties to MapType."""
+    spec = {
+        "type": "object",
+        "additionalProperties": {"type": "string"}
+    }
+    field = convert_json_to_iceberg_field("metadata", spec, IDAllocator(), required_fields=set())
+    assert field.name == "metadata"
+    assert isinstance(field.field_type, MapType)
+    assert isinstance(field.field_type.key_type, StringType)
+    assert isinstance(field.field_type.value_type, StringType)
+
+
+def test_array_of_primitives():
+    """Test converting a JSON array of primitive types to ListType."""
+    spec = {
+        "type": "array",
+        "items": {"type": "boolean"}
+    }
+    field = convert_json_to_iceberg_field("flags", spec, IDAllocator(), required_fields=set())
+    assert field.name == "flags"
+    assert isinstance(field.field_type, ListType)
+    assert isinstance(field.field_type.element_type, BooleanType)
+
+
+def test_map_with_key_value():
+    """Test converting a JSON map field with key/value under properties."""
+    spec = {
+        "type": "map",
+        "properties": {
+            "key": {"type": "string"},
+            "value": {"type": "integer"}
+        }
+    }
+    field = convert_json_to_iceberg_field("scores", spec, IDAllocator(), required_fields={"scores"})
+    assert field.name == "scores"
+    assert isinstance(field.field_type, MapType)
+    assert isinstance(field.field_type.key_type, StringType)
+    assert isinstance(field.field_type.value_type, IntegerType)
+
+
+def test_primitive_field():
+    """Test converting a primitive JSON type to the correct Iceberg type."""
+    spec = {"type": "date"}
+    field = convert_json_to_iceberg_field("created_at", spec, IDAllocator(), required_fields={"created_at"})
+    assert field.name == "created_at"
+    assert isinstance(field.field_type, DateType)
+    assert field.required is True
+
+
+def test_object_missing_properties():
+    """Test that missing 'properties' or 'additionalProperties' raises an error."""
+    spec = {"type": "object"}
+    import pytest
+    with pytest.raises(ValueError, match="must define either 'properties' or 'additionalProperties'"):
+        convert_json_to_iceberg_field("invalid_obj", spec, IDAllocator(), required_fields=set())
+
+
+def test_array_missing_items():
+    """Test that missing 'items' in an array raises an error."""
+    spec = {"type": "array"}
+    import pytest
+    with pytest.raises(ValueError, match="must have 'items' defined"):
+        convert_json_to_iceberg_field("invalid_arr", spec, IDAllocator(), required_fields=set())
+
+
+def test_map_missing_key_or_value():
+    """Test that a map field missing 'key' or 'value' raises an error."""
+    spec = {
+        "type": "map",
+        "properties": {
+            "key": {"type": "string"}
+        }
+    }
+    import pytest
+    with pytest.raises(ValueError, match="must have 'key' and 'value' under 'properties'"):
+        convert_json_to_iceberg_field("invalid_map", spec, IDAllocator(), required_fields=set())
+
+
+def test_unsupported_primitive_type():
+    """Test that unsupported primitive types raise an error."""
+    spec = {"type": "uuid"}
+    import pytest
+    with pytest.raises(ValueError, match="Unsupported primitive type"):
+        convert_json_to_iceberg_field("id", spec, IDAllocator(), required_fields=set())
+
+def test_render_primitive_field():
+    """Test rendering of a struct containing only primitive fields."""
+    struct = StructType(
+        NestedField(1, "name", StringType(), required=True),
+        NestedField(2, "age", IntegerType(), required=False)
+    )
+    tree = Tree("root")
+    render_type(tree, struct)
+    rendered = [child.label for child in tree.children]
+    assert rendered == ["name: string required", "age: int"]
+
+def test_render_nested_struct():
+    """Test rendering of a struct with a nested struct field."""
+    nested = StructType(
+        NestedField(2, "score", DoubleType(), required=True)
+    )
+    struct = StructType(
+        NestedField(1, "exam", nested, required=True)
+    )
+    tree = Tree("root")
+    render_type(tree, struct)
+    labels = [child.label for child in tree.children]
+    assert labels == ["exam: struct required"]
+    nested_labels = [child.label for child in tree.children[0].children]
+    assert nested_labels == ["score: double required"]
+
+def test_render_list_of_primitives():
+    """Test rendering of a list of primitive types."""
+    struct = StructType(
+        NestedField(1, "tags", ListType(element_id=2, element_type=StringType(), element_required=True), required=True)
+    )
+    tree = Tree("root")
+    render_type(tree, struct)
+    labels = [child.label for child in tree.children]
+    assert labels == ["tags: list<string> required"]
+
+def test_render_list_of_structs():
+    """Test rendering of a list of structs."""
+    element = StructType(
+        NestedField(2, "label", StringType(), required=False)
+    )
+    struct = StructType(
+        NestedField(1, "items", ListType(element_id=2, element_type=element, element_required=True), required=True)
+    )
+    tree = Tree("root")
+    render_type(tree, struct)
+    labels = [child.label for child in tree.children]
+    assert labels == ["items: list<struct> required"]
+    nested_labels = [child.label for child in tree.children[0].children]
+    assert nested_labels == ["label: string"]
+
+def test_render_map_field():
+    """Test rendering of a map field with primitive key and value types."""
+    struct = StructType(
+        NestedField(
+            1,
+            "metadata",
+            MapType(
+                key_id=2,
+                key_type=StringType(),
+                value_id=3,
+                value_type=BooleanType(),
+                value_required=True
+            ),
+            required=False
+        )
+    )
+    tree = Tree("root")
+    render_type(tree, struct)
+    labels = [child.label for child in tree.children]
+    assert labels == ["metadata: map"]
+    keys = [c.label for c in tree.children[0].children]
+    assert keys == ["key", "value"]
+    key_types = [c.children[0].label for c in tree.children[0].children]
+    assert key_types == ["string", "boolean"]
+
+def test_render_map_with_struct_value():
+    """Test rendering of a map field with struct as value."""
+    value_struct = StructType(
+        NestedField(3, "flag", BooleanType(), required=True)
+    )
+    struct = StructType(
+        NestedField(
+            1,
+            "details",
+            MapType(
+                key_id=2,
+                key_type=StringType(),
+                value_id=4,
+                value_type=value_struct,
+                value_required=True
+            ),
+            required=True
+        )
+    )
+    tree = Tree("root")
+    render_type(tree, struct)
+    assert tree.children[0].label == "details: map required"
+    assert tree.children[0].children[0].label == "key"
+    assert tree.children[0].children[0].children[0].label == "string"
+    assert tree.children[0].children[1].label == "value"
+    assert tree.children[0].children[1].children[0].label == "flag: boolean required"
+
+
+# Additional test to explicitly cover top-level ListType rendering
+def test_render_top_level_list_of_structs():
+    """Test rendering a top-level ListType of structs using render_type."""
+    element_type = StructType(
+        NestedField(1, "label", StringType(), required=True)
+    )
+    list_type = ListType(element_id=2, element_type=element_type, element_required=True)
+    tree = Tree("root")
+    render_type(tree, list_type)
+    assert tree.children[0].label == "list<struct>"
+    assert tree.children[0].children[0].label == "label: string required"
+
+def test_render_top_level_map():
+    """Test rendering a top-level MapType with primitive key/value types."""
+    map_type = MapType(
+        key_id=1,
+        key_type=StringType(),
+        value_id=2,
+        value_type=IntegerType(),
+        value_required=True
+    )
+    tree = Tree("root")
+    render_type(tree, map_type)
+    assert tree.children[0].label == "map"
+    assert tree.children[0].children[0].label == "key"
+    assert tree.children[0].children[0].children[0].label == "string"
+    assert tree.children[0].children[1].label == "value"
+    assert tree.children[0].children[1].children[0].label == "int"
+
+def test_type_to_tree_outputs():
+    """Test that type_to_tree produces expected tree output for different IcebergType variants."""
+    from iceberg_evolve.utils import type_to_tree
+    # Primitive
+    tree = type_to_tree("foo", StringType())
+    assert tree.label == "foo: string"
+    assert len(tree.children) == 0
+
+    # Struct
+    struct = StructType(
+        NestedField(1, "name", StringType(), required=True),
+        NestedField(2, "age", IntegerType(), required=False)
+    )
+    tree = type_to_tree("person", struct)
+    assert tree.label == "person: struct"
+    assert tree.children[0].label == "name: string required"
+    assert tree.children[1].label == "age: int"
+
+    # List
+    list_type = ListType(element_id=1, element_type=StringType(), element_required=True)
+    tree = type_to_tree("tags", list_type)
+    assert tree.label == "tags: list"
+    assert tree.children[0].label == "list<string>"
+
+    # Map
+    map_type = MapType(
+        key_id=1,
+        key_type=StringType(),
+        value_id=2,
+        value_type=BooleanType(),
+        value_required=True
+    )
+    tree = type_to_tree("metadata", map_type)
+    assert tree.label == "metadata: map<string, boolean>"
+    map_node = tree.children[0]
+    assert map_node.label == "map"
+    assert map_node.children[0].label == "key"
+    assert map_node.children[0].children[0].label == "string"
+    assert map_node.children[1].label == "value"
+    assert map_node.children[1].children[0].label == "boolean"

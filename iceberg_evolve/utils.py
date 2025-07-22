@@ -1,6 +1,4 @@
-import json
 import re
-from rich.text import Text
 from rich.tree import Tree
 from pyiceberg.schema import Schema as IcebergSchema
 
@@ -40,6 +38,62 @@ _PRIMITIVE_TYPES = {
 
 
 class IcebergSchemaSerializer:
+    """
+    Serializer/deserializer for PyIceberg Schema objects to/from Iceberg's JSON schema format.
+
+    The JSON schema format follows Iceberg's metadata specification:
+
+    - Top-level schema object:
+    ```
+      {
+        "type": "struct",
+        "schema-id": <int>,
+        "fields": [ <field>, ... ]
+      }
+    ```
+
+    - Each field object contains:
+    ```
+      {
+        "id": <int>,               # Unique field identifier
+        "name": <string>,          # Field name
+        "required": <bool>,        # Whether the field is required
+        "type": <type_definition>  # Field type descriptor
+      }
+    ```
+
+    - A `type_definition` may be:
+      * A primitive type string (e.g., "string", "int", "boolean", or "decimal(p, s)")
+      * A struct:
+        ```
+        {
+          "type": "struct",
+          "fields": [ <field>, ... ]
+        }
+        ```
+      * A list:
+        ```
+        {
+          "type": "list",
+          "element-id": <int>,
+          "element-required": <bool>,
+          "element": <type_definition>
+        }
+        ```
+      * A map:
+        ```
+        {
+          "type": "map",
+          "key-id": <int>,
+          "key": <type_definition>,
+          "value-id": <int>,
+          "value-required": <bool>,
+          "value": <type_definition>
+        }
+        ```
+
+    This format matches the schema representation Iceberg writes in its metadata JSON.
+    """
     @staticmethod
     def to_dict(schema: IcebergSchema) -> dict:
         """
@@ -285,17 +339,35 @@ def convert_json_to_iceberg_field(
     required = name in required_fields
 
     if json_type == "object":
-        props = spec.get("properties", {})
-        fields = [
-            convert_json_to_iceberg_field(child_name, child_spec, allocator, required_fields)
-            for child_name, child_spec in props.items()
-        ]
-        return NestedField(
-            field_id=field_id,
-            name=name,
-            field_type=StructType(*fields),
-            required=required
-        )
+        if "properties" in spec:
+            props = spec["properties"]
+            fields = [
+                convert_json_to_iceberg_field(child_name, child_spec, allocator, required_fields)
+                for child_name, child_spec in props.items()
+            ]
+            return NestedField(
+                field_id=field_id,
+                name=name,
+                field_type=StructType(*fields),
+                required=required
+            )
+        elif "additionalProperties" in spec:
+            value_spec = spec["additionalProperties"]
+            value_field = convert_json_to_iceberg_field(name + "_value", value_spec, allocator, required_fields)
+            return NestedField(
+                field_id=field_id,
+                name=name,
+                field_type=MapType(
+                    key_id=allocator.next(),
+                    key_type=StringType(),
+                    value_id=allocator.next(),
+                    value_type=value_field.field_type,
+                    value_required=True
+                ),
+                required=required
+            )
+        else:
+            raise ValueError(f"Object field '{name}' must define either 'properties' or 'additionalProperties'.")
 
     elif json_type == "array":
         items = spec.get("items")
@@ -345,46 +417,6 @@ def convert_json_to_iceberg_field(
             required=required
         )
 
-def _type_to_tree(field_type: IcebergType, label: str | None = None, use_color: bool = False) -> Tree:
-    """
-    Convert an IcebergType to a rich Tree representation.
-
-    Args:
-        field_type (IcebergType): The Iceberg type to convert.
-        label (str | None): Optional label for the root node.
-        use_color (bool): Whether to apply color styling.
-
-    Returns:
-        Tree: A rich Tree object representing the type tree.
-    """
-    root = Tree(f"{label}:" if label else "")
-
-    def _render_type(node: Tree, t: IcebergType):
-        if isinstance(t, (StringType, IntegerType, LongType, FloatType, DoubleType, BooleanType, DateType, TimestampType, BinaryType, DecimalType)):
-            text = Text(clean_type_str(t), style="bold green" if use_color else None)
-            node.add(text)
-        elif isinstance(t, StructType):
-            struct_node = node.add(Text("struct", style="bold blue" if use_color else None))
-            for f in t.fields:
-                optional = "optional " if not f.required else ""
-                child_node = struct_node.add(f"{f.name}: {optional}{clean_type_str(f.field_type)}")
-                _render_type(child_node, f.field_type)
-        elif isinstance(t, ListType):
-            list_node = node.add(Text("list", style="bold magenta" if use_color else None))
-            element_node = list_node.add("element:")
-            _render_type(element_node, t.element_type)
-        elif isinstance(t, MapType):
-            map_node = node.add(Text("map", style="bold cyan" if use_color else None))
-            key_node = map_node.add("key:")
-            _render_type(key_node, t.key_type)
-            value_node = map_node.add("value:")
-            _render_type(value_node, t.value_type)
-        else:
-            text = Text(clean_type_str(t), style="bold red" if use_color else None)
-            node.add(text)
-
-    _render_type(root, field_type)
-    return root
 
 def render_type(node: Tree, tp: IcebergType):
     """
