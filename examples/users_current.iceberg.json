@@ -3,57 +3,57 @@
     "schema-id": 0,
     "fields": [
         {
-            "id": 1000,
+            "id": 1,
             "name": "id",
             "required": true,
             "type": "string"
         },
         {
-            "id": 1001,
+            "id": 2,
             "name": "age",
             "required": true,
             "type": "int"
         },
         {
-            "id": 1002,
+            "id": 3,
             "name": "signup",
             "required": false,
             "type": "long"
         },
         {
-            "id": 1003,
+            "id": 4,
             "name": "email_address",
             "required": false,
             "type": "string"
         },
         {
-            "id": 1011,
+            "id": 5,
             "name": "metadata",
             "required": false,
             "type": {
                 "type": "struct",
                 "fields": [
                     {
-                        "id": 1004,
+                        "id": 6,
                         "name": "browser",
                         "required": false,
                         "type": "string"
                     },
                     {
-                        "id": 1007,
+                        "id": 7,
                         "name": "location",
                         "required": false,
                         "type": {
                             "type": "struct",
                             "fields": [
                                 {
-                                    "id": 1005,
+                                    "id": 9,
                                     "name": "city",
                                     "required": false,
                                     "type": "string"
                                 },
                                 {
-                                    "id": 1006,
+                                    "id": 10,
                                     "name": "country",
                                     "required": false,
                                     "type": "string"
@@ -62,12 +62,12 @@
                         }
                     },
                     {
-                        "id": 1010,
+                        "id": 8,
                         "name": "login_attempts",
                         "required": false,
                         "type": {
                             "type": "list",
-                            "element-id": 1008,
+                            "element-id": 8,
                             "element-required": false,
                             "element": "int"
                         }

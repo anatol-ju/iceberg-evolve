@@ -63,7 +63,7 @@ services:
       context: .
       dockerfile: runner.Dockerfile
     volumes:
-      - .:/app
+      - ./examples:/app/examples
       #- ./pyiceberg.yaml:/root/.pyiceberg/config.yaml:ro
       - ./tests/integration.py:/app/tests/integration.py
     depends_on:

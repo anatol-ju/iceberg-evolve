@@ -7,7 +7,7 @@ RUN apt-get update && apt-get install -y openjdk-17-jdk
 
 # Install Poetry
 RUN pip install poetry && \
-    poetry config virtualenvs.create false && \
+    poetry config virtualenvs.in-project true && \
     poetry config cache-dir /var/cache/pypoetry && \
     poetry config installer.parallel true
 

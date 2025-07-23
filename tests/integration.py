@@ -25,8 +25,7 @@ def setup_iceberg_table():
         pass  # already exists
     print("namespaces:", catalog.list_namespaces())
 
-    evolve_schema = EvolveSchema.from_file("./examples/users_current.iceberg.json")
-    iceberg_schema = evolve_schema.to_iceberg_schema()
+    iceberg_schema = EvolveSchema.from_file("./examples/users_current.iceberg.json")
 
     # Create table
     try:
@@ -36,7 +35,7 @@ def setup_iceberg_table():
 
     catalog.create_table(
         identifier=full_identifier,
-        schema=iceberg_schema,
+        schema=iceberg_schema.schema,
         # location="s3a://warehouse/iceberg_evolve_test"
     )
     table = catalog.load_table(full_identifier)
@@ -62,20 +61,22 @@ def test_schema_diff_against_catalog(setup_iceberg_table):
     json_path = pathlib.Path("examples/users_new.iceberg.json")
     assert json_path.exists(), "Missing test schema JSON file."
 
-    json_schema = EvolveSchema.from_file("examples/users_new.iceberg.json").to_iceberg_schema()
+    json_schema = EvolveSchema.from_file("examples/users_new.iceberg.json")
     iceberg_schema = EvolveSchema.from_iceberg(table_identifier, catalog="hive")
-    print(iceberg_schema)
+    print(json_schema.schema, iceberg_schema.schema)
 
     assert json_schema.schema is not None
     assert iceberg_schema.schema is not None
 
     diff = SchemaDiff.from_schemas(iceberg_schema, json_schema)
+    diff.display()
 
     assert len(diff.added) == 2
     assert diff.added[0].name == "is_active"
     assert diff.added[0].current_type is None
     assert diff.added[0].new_type == BooleanType()
-    assert diff.added[1].name == "email"
+    # SchemaDiff considers nested fields as well
+    assert diff.added[1].name == "metadata.used_login"
     assert diff.added[1].current_type is None
     assert diff.added[1].new_type == StringType()
 
@@ -84,10 +85,10 @@ def test_schema_diff_detects_renames_by_id(setup_iceberg_table):
     _, table_identifier = setup_iceberg_table
 
     # Example file where one field is renamed but has the same ID
-    renamed_path = pathlib.Path("examples/users_renamed.json")
+    renamed_path = pathlib.Path("examples/users_renamed.iceberg.json")
     assert renamed_path.exists(), "Missing renamed test schema JSON file."
 
-    new_schema = EvolveSchema.from_file("examples/users_renamed.json")
+    new_schema = EvolveSchema.from_file("examples/users_renamed.iceberg.json")
     original_schema = EvolveSchema.from_iceberg(table_identifier, catalog="hive")
 
     diff = SchemaDiff.from_schemas(original_schema, new_schema)
@@ -99,7 +100,7 @@ def test_schema_diff_detects_renames_by_id(setup_iceberg_table):
 
 
 # Note: The examples directory must include:
-# - users_current.json
-# - users_new.json
-# - users_renamed.json
+# - users_current.iceberg.json
+# - users_new.iceberg.json
+# - users_renamed.iceberg.json
 # with correct Iceberg-style schema including field-ids

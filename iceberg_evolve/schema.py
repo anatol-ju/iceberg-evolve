@@ -53,6 +53,7 @@ Examples:
 """
 from iceberg_evolve.utils import IcebergSchemaSerializer
 from pyiceberg.schema import Schema as IcebergSchema
+from pyiceberg.catalog import load_catalog
 import json
 
 class Schema:
@@ -69,6 +70,13 @@ class Schema:
         """
         return self.iceberg_schema.fields
 
+    @property
+    def schema(self) -> IcebergSchema:
+        """
+        Return the underlying PyIceberg Schema object.
+        """
+        return self.iceberg_schema
+
     def __repr__(self):
         return f"IcebergSchema({self.iceberg_schema})"
 
@@ -78,7 +86,7 @@ class Schema:
         Load schema from a JSON file.
         """
         if not path.lower().endswith(".json"):
-            raise ValueError("Only JSON schema files are supported.")
+            raise ValueError("Currently, only JSON files are supported for schema loading.")
         with open(path) as f:
             data = json.load(f)
         iceberg_schema = IcebergSchemaSerializer.from_dict(data)
@@ -87,11 +95,13 @@ class Schema:
     @classmethod
     def from_iceberg(cls, table_name: str, catalog: str = "glue", config: dict = None) -> "Schema":
         """
-        Load schema from an Iceberg table in a catalog.
+        Load schema from an Iceberg table in a catalog using PyIceberg.
         """
-        from iceberg_evolve.catalog import load_table_schema
-        data = load_table_schema(table_name, catalog, config)
-        iceberg_schema = IcebergSchemaSerializer.from_dict(data)
+        catalog_kwargs = config or {}
+        catalog_client = load_catalog(catalog, **catalog_kwargs)
+        table = catalog_client.load_table(table_name)
+        # PyIceberg Table.schema returns a pyiceberg.schema.Schema
+        iceberg_schema = table.schema
         return cls(iceberg_schema)
 
     @classmethod
@@ -100,7 +110,7 @@ class Schema:
         Load schema from an S3 bucket.
         """
         if not key.lower().endswith(".json"):
-            raise ValueError("Only JSON schema files are supported for schema loading from S3.")
+            raise ValueError("Currently, only JSON files are supported for schema loading from S3.")
         import boto3
         s3 = boto3.resource("s3")
         obj = s3.Object(bucket, key)

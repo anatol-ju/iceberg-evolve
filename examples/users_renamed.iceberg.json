@@ -1,0 +1,79 @@
+{
+    "type": "struct",
+    "schema-id": 0,
+    "fields": [
+        {
+            "id": 1,
+            "name": "id",
+            "required": true,
+            "type": "string"
+        },
+        {
+            "id": 2,
+            "name": "age",
+            "required": true,
+            "type": "int"
+        },
+        {
+            "id": 3,
+            "name": "signup",
+            "required": false,
+            "type": "long"
+        },
+        {
+            "id": 4,
+            "name": "email",
+            "required": false,
+            "type": "string"
+        },
+        {
+            "id": 5,
+            "name": "metadata",
+            "required": false,
+            "type": {
+                "type": "struct",
+                "fields": [
+                    {
+                        "id": 6,
+                        "name": "browser",
+                        "required": false,
+                        "type": "string"
+                    },
+                    {
+                        "id": 7,
+                        "name": "location",
+                        "required": false,
+                        "type": {
+                            "type": "struct",
+                            "fields": [
+                                {
+                                    "id": 9,
+                                    "name": "city",
+                                    "required": false,
+                                    "type": "string"
+                                },
+                                {
+                                    "id": 10,
+                                    "name": "country",
+                                    "required": false,
+                                    "type": "string"
+                                }
+                            ]
+                        }
+                    },
+                    {
+                        "id": 8,
+                        "name": "login_attempts",
+                        "required": false,
+                        "type": {
+                            "type": "list",
+                            "element-id": 8,
+                            "element-required": false,
+                            "element": "int"
+                        }
+                    }
+                ]
+            }
+        }
+    ]
+}

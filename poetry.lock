@@ -2553,14 +2553,14 @@ crt = ["botocore[crt] (>=1.37.4,<2.0a.0)"]
 
 [[package]]
 name = "schemaworks"
-version = "1.2.1"
+version = "1.2.2"
 description = "A schema conversion toolkit for JSON, Spark, PyIceberg and SQL formats."
 optional = false
 python-versions = ">=3.10"
 groups = ["main"]
 files = [
-    {file = "schemaworks-1.2.1-py3-none-any.whl", hash = "sha256:f6a74b28a1b3c4686165a40acc647d473c72b7a91143d89cbf27273627efacb2"},
-    {file = "schemaworks-1.2.1.tar.gz", hash = "sha256:5074132ee69f00a5bd69dd583124d7fbd26d630367abce7cce40bdef4a57dc43"},
+    {file = "schemaworks-1.2.2-py3-none-any.whl", hash = "sha256:bbba396eab04a0ef63c7cbac116739e83d2dcf0aa7e7fabcc3ba41cdedc949a2"},
+    {file = "schemaworks-1.2.2.tar.gz", hash = "sha256:9900e15b49b9feae9f249a4d16fe7423d553ab58ef8af0b85bf479b99c93e2bd"},
 ]
 
 [package.dependencies]

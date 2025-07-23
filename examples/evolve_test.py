@@ -14,8 +14,8 @@ def load_schema(path: str) -> Schema:
 
 def main():
     base_path = os.path.join(os.path.dirname(__file__), "..", "examples")
-    current_schema_path = os.path.join(base_path, "users_current_serialized.json")
-    new_schema_path = os.path.join(base_path, "users_new_serialized.json")
+    current_schema_path = os.path.join(base_path, "users_current.iceberg.json")
+    new_schema_path = os.path.join(base_path, "users_new.iceberg.json")
 
     current_schema = load_schema(current_schema_path)
     new_schema = load_schema(new_schema_path)
