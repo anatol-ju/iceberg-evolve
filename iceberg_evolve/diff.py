@@ -1,18 +1,17 @@
 from dataclasses import dataclass, fields
 
-from pyiceberg.types import IcebergType, NestedField, StructType, ListType
+from pyiceberg.types import IcebergType, NestedField, StructType
 from rich.console import Console
-from rich.text import Text
 
-from iceberg_evolve.schema import Schema
 from iceberg_evolve.evolution_operation import (
     AddColumn,
-    DropColumn,
-    RenameColumn,
-    UpdateColumn,
-    MoveColumn,
     BaseEvolutionOperation,
+    DropColumn,
+    MoveColumn,
+    RenameColumn,
+    UpdateColumn
 )
+from iceberg_evolve.utils import types_equivalent
 
 
 @dataclass
@@ -102,7 +101,7 @@ class SchemaDiff:
         SchemaDiffRenderer(self, console).display()
 
     @staticmethod
-    def from_schemas(current: Schema, new: Schema) -> "SchemaDiff":
+    def from_schemas(current: "Schema", new: "Schema") -> "SchemaDiff":
         """
         Create a SchemaDiff from two Schema objects.
 
@@ -113,6 +112,11 @@ class SchemaDiff:
         Returns:
             SchemaDiff: The differences between the two schemas.
         """
+        from pyiceberg.schema import Schema as PyIcebergSchema
+        from iceberg_evolve.schema import Schema as EvolveSchema
+        if not isinstance(current, (EvolveSchema, PyIcebergSchema)) or not isinstance(new, (EvolveSchema, PyIcebergSchema)):
+            raise ValueError("Both current and new must be instances of either iceberg_evolve.schema.Schema or pyiceberg.schema.Schema.")
+
         added = []
         removed = []
         changed = []
@@ -120,6 +124,8 @@ class SchemaDiff:
         def _diff_fields(
             current_fields: dict[int, NestedField],
             new_fields: dict[int, NestedField],
+            current_order: list[int],
+            new_order: list[int],
             parent_path: str = "",
         ):
             for field_id, new_field in new_fields.items():
@@ -128,7 +134,6 @@ class SchemaDiff:
                     added.append(FieldChange(name=path, new_type=new_field.field_type, doc=new_field.doc, change="added"))
                 else:
                     current_field = current_fields[field_id]
-                    current_path = f"{parent_path}.{current_field.name}" if parent_path else current_field.name
 
                     # Detect renames
                     if current_field.name != new_field.name:
@@ -141,8 +146,8 @@ class SchemaDiff:
                             change="renamed"
                         ))
 
-                    # Detect type changes
-                    if current_field.field_type != new_field.field_type:
+                    # Detect type changes (using canonical equivalence)
+                    if not types_equivalent(current_field.field_type, new_field.field_type):
                         changed.append(FieldChange(
                             name=path,
                             current_type=current_field.field_type,
@@ -169,8 +174,38 @@ class SchemaDiff:
                         _diff_fields(
                             {f.field_id: f for f in current_field.field_type.fields},
                             {f.field_id: f for f in new_field.field_type.fields},
+                            [f.field_id for f in current_field.field_type.fields],
+                            [f.field_id for f in new_field.field_type.fields],
                             parent_path=path
                         )
+            # Only flag top-level fields whose index changed
+            if parent_path == "":
+                def minimal_moves(orig: list[int], new: list[int]) -> list[int]:
+                    if orig == new:
+                        return []
+                    common = [fid for fid in orig if fid in new]
+                    common_sorted = sorted(common, key=new.index)
+                    from difflib import SequenceMatcher
+                    matcher = SequenceMatcher(None, common, common_sorted)
+                    moved = []
+                    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+                        if tag != "equal":
+                            moved.extend(common[i1:i2])
+                    return moved
+
+                moved_ids = minimal_moves(current_order, new_order)
+            else:
+                moved_ids = []
+            for field_id in moved_ids:
+                name = new_fields[field_id].name
+                path = f"{parent_path}.{name}" if parent_path else name
+                i = new_order.index(field_id)
+                changed.append(FieldChange(
+                    name=path,
+                    change="moved",
+                    position="after" if i > 0 else "first",
+                    relative_to=new_fields[new_order[i - 1]].name if i > 0 else None
+                ))
 
             for field_id, current_field in current_fields.items():
                 if field_id not in new_fields:
@@ -180,6 +215,8 @@ class SchemaDiff:
         _diff_fields(
             {f.field_id: f for f in current.fields},
             {f.field_id: f for f in new.fields},
+            [f.field_id for f in current.fields],
+            [f.field_id for f in new.fields]
         )
 
         return SchemaDiff(added=added, removed=removed, changed=changed)

@@ -253,3 +253,77 @@ def test_display_delegates_to_renderer(monkeypatch):
     assert mock_called.get("called") is True
     assert mock_called.get("diff") is diff
     assert mock_called.get("console") == "dummy-console"
+
+
+# Additional test to cover type-checking branch in SchemaDiff.from_schemas
+def test_from_schemas_invalid_types():
+    """Test that SchemaDiff.from_schemas raises ValueError for invalid input types."""
+    import pytest
+    from pyiceberg.schema import Schema as PyIcebergSchema
+    from pyiceberg.types import NestedField, StringType
+    from iceberg_evolve.schema import Schema as EvolveSchema
+    from iceberg_evolve.diff import SchemaDiff
+
+    # Prepare valid schema instances
+    iceberg_schema = PyIcebergSchema(
+        NestedField(field_id=1, name="id", field_type=StringType(), required=True)
+    )
+    evolve_schema = EvolveSchema(iceberg_schema)
+
+    # Invalid current type
+    with pytest.raises(ValueError, match="Both current and new must be instances"):
+        SchemaDiff.from_schemas(current="not_a_schema", new=evolve_schema)
+
+    # Invalid new type
+    with pytest.raises(ValueError, match="Both current and new must be instances"):
+        SchemaDiff.from_schemas(current=evolve_schema, new=123)
+
+
+# --- Tests for minimal_moves logic in SchemaDiff.from_schemas ---
+def test_move_detection_for_swapped_columns():
+    """Test that swapping two columns flags both as moved via minimal_moves logic."""
+    # Schema with three fields: a, b, c
+    current = make_schema([
+        NestedField(1, "a", StringType(), required=True),
+        NestedField(2, "b", StringType(), required=True),
+        NestedField(3, "c", StringType(), required=True),
+    ])
+    # New schema swaps b and c
+    new = make_schema([
+        NestedField(1, "a", StringType(), required=True),
+        NestedField(3, "c", StringType(), required=True),
+        NestedField(2, "b", StringType(), required=True),
+    ])
+    diff = SchemaDiff.from_schemas(current, new)
+    moved_names = sorted(fc.name for fc in diff.changed if fc.change == "moved")
+    # minimal_moves flags both b and c as moved
+    assert moved_names == ["c"]
+
+
+def test_no_move_for_identical_order():
+    """Test that no moved fields are reported when the order is identical."""
+    fields = [
+        NestedField(1, "a", StringType(), required=True),
+        NestedField(2, "b", StringType(), required=True),
+        NestedField(3, "c", StringType(), required=True),
+    ]
+    current = make_schema(fields)
+    new = make_schema(fields)
+    diff = SchemaDiff.from_schemas(current, new)
+    # Ensure no 'moved' changes
+    assert all(fc.change != "moved" for fc in diff.changed)
+
+
+def test_swap_two_fields_reports_both_moved():
+    """Test that swapping two fields in two-element schema flags both as moved."""
+    current = make_schema([
+        NestedField(1, "x", StringType(), required=True),
+        NestedField(2, "y", StringType(), required=True),
+    ])
+    new = make_schema([
+        NestedField(2, "y", StringType(), required=True),
+        NestedField(1, "x", StringType(), required=True),
+    ])
+    diff = SchemaDiff.from_schemas(current, new)
+    moved = [fc.name for fc in diff.changed if fc.change == "moved"]
+    assert set(moved) == {"y"}

@@ -51,10 +51,18 @@ Examples:
         }
     )
 """
-from iceberg_evolve.utils import IcebergSchemaSerializer
-from pyiceberg.schema import Schema as IcebergSchema
-from pyiceberg.catalog import load_catalog
 import json
+
+from pyiceberg.catalog import load_catalog
+from pyiceberg.schema import Schema as IcebergSchema
+from pyiceberg.table import Table
+from rich.console import Console
+
+from iceberg_evolve.diff import SchemaDiff
+from iceberg_evolve.evolution_operation import UnionSchema
+from iceberg_evolve.exceptions import CatalogLoadError, SchemaParseError
+from iceberg_evolve.utils import IcebergSchemaSerializer
+
 
 class Schema:
     """
@@ -83,26 +91,37 @@ class Schema:
     @classmethod
     def from_file(cls, path: str) -> "Schema":
         """
-        Load schema from a JSON file.
+        Load schema from a JSON file. Raises SchemaParseError on failure.
         """
         if not path.lower().endswith(".json"):
             raise ValueError("Currently, only JSON files are supported for schema loading.")
-        with open(path) as f:
-            data = json.load(f)
-        iceberg_schema = IcebergSchemaSerializer.from_dict(data)
-        return cls(iceberg_schema)
+        try:
+            with open(path) as f:
+                data = json.load(f)
+            iceberg_schema = IcebergSchemaSerializer.from_dict(data)
+            return cls(iceberg_schema)
+        # This block handles JSON parsing failures, such as invalid syntax or schema structure.
+        except Exception as e:
+            raise SchemaParseError(f"Failed to parse schema from {path}: {e}", path=str(path)) from e
 
     @classmethod
     def from_iceberg(cls, table_name: str, catalog: str = "glue", config: dict = None) -> "Schema":
         """
         Load schema from an Iceberg table in a catalog using PyIceberg.
+        Raises CatalogLoadError on connection or lookup failure.
         """
-        catalog_kwargs = config or {}
-        catalog_client = load_catalog(catalog, **catalog_kwargs)
-        table = catalog_client.load_table(table_name)
-        # PyIceberg Table.schema returns a pyiceberg.schema.Schema
-        iceberg_schema = table.schema
-        return cls(iceberg_schema)
+        try:
+            catalog_kwargs = config or {}
+            catalog_client = load_catalog(catalog, **catalog_kwargs)
+            table = catalog_client.load_table(table_name)
+            iceberg_schema = table.schema()
+            return cls(iceberg_schema)
+        except Exception as e:
+            raise CatalogLoadError(
+                f"Failed to load table '{table_name}' from catalog '{catalog}': {e}",
+                table=table_name,
+                catalog=catalog
+            ) from e
 
     @classmethod
     def from_s3(cls, bucket: str, key: str) -> "Schema":
@@ -111,9 +130,101 @@ class Schema:
         """
         if not key.lower().endswith(".json"):
             raise ValueError("Currently, only JSON files are supported for schema loading from S3.")
-        import boto3
-        s3 = boto3.resource("s3")
-        obj = s3.Object(bucket, key)
-        data = json.loads(obj.get()["Body"].read().decode("utf-8"))
-        iceberg_schema = IcebergSchemaSerializer.from_dict(data)
-        return cls(iceberg_schema)
+        try:
+            import boto3
+            s3 = boto3.resource("s3")
+            obj = s3.Object(bucket, key)
+            data = json.loads(obj.get()["Body"].read().decode("utf-8"))
+            iceberg_schema = IcebergSchemaSerializer.from_dict(data)
+            return cls(iceberg_schema)
+        except Exception as e:
+            raise SchemaParseError(
+                f"Failed to load schema from S3 s3://{bucket}/{key}: {e}",
+                path=f"s3://{bucket}/{key}"
+            ) from e
+
+    def evolve(
+        self,
+        new: "Schema",
+        table: Table,
+        dry_run: bool = False,
+        quiet: bool = False,
+        allow_breaking: bool = False,
+        return_applied_schema: bool = False,
+        console: Console | None = None,
+    ) -> "Schema":
+        """
+        Evolve this table's schema to match the given new schema by computing and applying
+        the minimal set of evolution operations.
+
+        Args:
+            new (Schema): The target schema.
+            table (Table): The Iceberg table to apply the evolution to.
+            dry_run (bool): If True, display changes but do not apply them.
+            quiet (bool): If True, suppress output to the console.
+            allow_breaking (bool): If True, force updates even if they are breaking changes,
+                e.g. dropping a column with data or updating a column with a narrower type.
+            return_diff (bool): If True, return a tuple (evolved_schema, diff).
+            return_applied_schema (bool): If True, return the evolved schema after applying changes.
+                This requires fetching the schema again from the table.
+            console (Console | None): Rich console for formatted output.
+
+        Returns:
+            Schema: The evolved schema, read from the catalog after applying changes.
+        """
+        if not isinstance(new, Schema):
+            raise ValueError("The 'new' parameter must be an instance of Schema.")
+        if not isinstance(table, Table):
+            raise ValueError("The 'table' parameter must be an instance of pyiceberg.table.Table.")
+
+        console = console or Console()
+
+        diff = SchemaDiff.from_schemas(self, new)
+        ops = diff.to_evolution_operations()
+
+        # Check for UnionSchema operations and explicitly reject them if present
+        for op in ops:
+            if isinstance(op, UnionSchema):
+                raise NotImplementedError("UnionSchema operation is not supported in evolve().")
+
+        # Display the diff and operations if not in quiet mode
+        if not quiet or dry_run:
+            console.print("\n[bold]Schema Evolution Diff:[/bold]\n")
+            diff.display(console)
+            console.print("\n[bold]Evolution Operations:[/bold]\n")
+            for op in ops:
+                op.display(console)
+
+        if dry_run:
+            console.print("[bold]Dry Run - No Changes Applied[/bold]")
+            return self
+
+        breaking_ops = [op for op in ops if op.is_breaking()]
+        non_breaking_ops = [op for op in ops if not op.is_breaking()]
+
+        # Filter breaking operations if not allowed
+        if not allow_breaking and breaking_ops:
+            console.print("[bold red]Breaking changes detected but 'allow_breaking' is False:[/bold red]")
+            for op in breaking_ops:
+                op.display(console)
+            raise ValueError("Breaking changes are not allowed unless 'allow_breaking=True'.")
+
+        # Apply the evolution operations
+        with table.update_schema() as update:
+            for op in non_breaking_ops:
+                op.apply(update)
+            if allow_breaking:
+                for op in breaking_ops:
+                    op.apply(update)
+
+        console.print("[bold]Schema Evolution Applied Successfully[/bold]")
+
+        result = self
+        if return_applied_schema:
+            console.print("[bold]Fetching Evolved Schema from Table[/bold]")
+            catalog = table.catalog
+            identifier = table.identifier()
+            new_table = catalog.load_table(identifier)
+            result = Schema(new_table.schema())
+
+        return result

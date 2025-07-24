@@ -21,7 +21,13 @@
             "type": "int"
         },
         {
-            "id": 14,
+            "id": 7,
+            "name": "username",
+            "required": false,
+            "type": "string"
+        },
+        {
+            "id": 17,
             "name": "is_active",
             "required": false,
             "type": "boolean"
@@ -40,20 +46,20 @@
                 "type": "struct",
                 "fields": [
                     {
-                        "id": 7,
+                        "id": 9,
                         "name": "location",
                         "required": false,
                         "type": {
                             "type": "struct",
                             "fields": [
                                 {
-                                    "id": 9,
+                                    "id": 11,
                                     "name": "city",
                                     "required": false,
                                     "type": "string"
                                 },
                                 {
-                                    "id": 10,
+                                    "id": 12,
                                     "name": "country",
                                     "required": false,
                                     "type": "string"
@@ -62,24 +68,24 @@
                         }
                     },
                     {
-                        "id": 8,
+                        "id": 10,
                         "name": "login_attempts",
                         "required": false,
                         "type": {
                             "type": "list",
-                            "element-id": 8,
+                            "element-id": 13,
                             "element-required": true,
                             "element": {
                                 "type": "struct",
                                 "fields": [
                                     {
-                                        "id": 11,
+                                        "id": 14,
                                         "name": "timestamp",
                                         "required": true,
                                         "type": "int"
                                     },
                                     {
-                                        "id": 12,
+                                        "id": 15,
                                         "name": "success",
                                         "required": true,
                                         "type": "boolean"
@@ -89,7 +95,7 @@
                         }
                     },
                     {
-                        "id": 13,
+                        "id": 16,
                         "name": "used_login",
                         "required": false,
                         "type": "string"

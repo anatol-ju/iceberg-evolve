@@ -473,3 +473,52 @@ def type_to_tree(label: str, tp: IcebergType) -> Tree:
     root = Tree(root_label)
     render_type(root, tp)
     return root
+
+
+def canonicalize_type(t: IcebergType) -> IcebergType:
+    """
+    Return a canonicalized version of an Iceberg type.
+    Strips docstrings and reorders struct fields by field_id.
+    This function is used to ensure that Iceberg types are compared in a consistent manner.
+    """
+    if isinstance(t, StructType):
+        sorted_fields = sorted(t.fields, key=lambda f: f.field_id)
+        new_fields = []
+        for f in sorted_fields:
+            new_field_type = canonicalize_type(f.field_type)
+            new_fields.append(NestedField(
+                field_id=f.field_id,
+                name=f.name,
+                field_type=new_field_type,
+                required=f.required
+            ))
+        return StructType(*new_fields)
+
+    elif isinstance(t, ListType):
+        return ListType(
+            element_id=t.element_id,
+            element_required=t.element_required,
+            element_type=canonicalize_type(t.element_type)
+        )
+
+    elif isinstance(t, MapType):
+        return MapType(
+            key_id=t.key_id,
+            key_type=canonicalize_type(t.key_type),
+            value_id=t.value_id,
+            value_type=canonicalize_type(t.value_type),
+            value_required=t.value_required
+        )
+
+    else:
+        return t
+
+
+def types_equivalent(a: IcebergType, b: IcebergType) -> bool:
+    """
+    Compare two Iceberg types for structural equivalence,
+    ignoring field order and non-essential metadata like docs.
+    """
+    ca = canonicalize_type(a)
+    cb = canonicalize_type(b)
+    return ca == cb

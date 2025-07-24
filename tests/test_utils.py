@@ -20,12 +20,14 @@ from rich.tree import Tree
 from iceberg_evolve.utils import (
     IcebergSchemaSerializer,
     IDAllocator,
+    canonicalize_type,
     clean_type_str,
     convert_json_to_iceberg_field,
     is_narrower_than,
     parse_sql_type,
     render_type,
-    split_top_level
+    split_top_level,
+    types_equivalent
 )
 
 
@@ -540,3 +542,78 @@ def test_type_to_tree_outputs():
     assert map_node.children[0].children[0].label == "string"
     assert map_node.children[1].label == "value"
     assert map_node.children[1].children[0].label == "boolean"
+
+
+def test_canonicalize_type_listtype_with_struct_element():
+    """Test canonicalize_type correctly processes a ListType with a nested StructType element."""
+    # Create a struct with out-of-order fields
+    nested = StructType(
+        NestedField(field_id=2, name="b", field_type=StringType(), required=False),
+        NestedField(field_id=1, name="a", field_type=IntegerType(), required=True),
+    )
+    # Wrap in a list type
+    lt = ListType(element_id=7, element_type=nested, element_required=True)
+    canon = canonicalize_type(lt)
+
+    # The result should still be a ListType
+    assert isinstance(canon, ListType)
+    assert canon.element_id == 7
+    assert canon.element_required is True
+
+    # Its element_type should be a StructType with fields sorted by ID: 1 then 2
+    assert isinstance(canon.element_type, StructType)
+    ids = [f.field_id for f in canon.element_type.fields]
+    names = [f.name for f in canon.element_type.fields]
+    assert ids == [1, 2]
+    assert names == ["a", "b"]
+
+def test_canonicalize_type_maptype_with_struct_value():
+    """Test canonicalize_type correctly processes a MapType with a nested StructType value."""
+    # Create a struct with out-of-order fields
+    nested = StructType(
+        NestedField(field_id=2, name="b", field_type=DoubleType(), required=True),
+        NestedField(field_id=1, name="a", field_type=FloatType(), required=False),
+    )
+    # Wrap in a map type
+    mt = MapType(
+        key_id=5,
+        key_type=BooleanType(),
+        value_id=6,
+        value_type=nested,
+        value_required=False
+    )
+    canon = canonicalize_type(mt)
+
+    # The result should still be a MapType
+    assert isinstance(canon, MapType)
+    assert canon.key_id == 5
+    assert canon.value_id == 6
+    assert canon.value_required is False
+
+    # Its key_type remains primitive
+    assert isinstance(canon.key_type, BooleanType)
+
+    # Its value_type should be a StructType with fields sorted by ID: 1 then 2
+    assert isinstance(canon.value_type, StructType)
+    ids = [f.field_id for f in canon.value_type.fields]
+    names = [f.name for f in canon.value_type.fields]
+    assert ids == [1, 2]
+    assert names == ["a", "b"]
+
+def test_types_equivalent_list_and_map():
+    """Test that types_equivalent returns True for structurally identical ListType and MapType."""
+    lt1 = ListType(element_id=10, element_type=IntegerType(), element_required=False)
+    lt2 = ListType(element_id=10, element_type=IntegerType(), element_required=False)
+    assert types_equivalent(lt1, lt2)
+
+    mt1 = MapType(
+        key_id=1, key_type=StringType(),
+        value_id=2, value_type=LongType(),
+        value_required=True
+    )
+    mt2 = MapType(
+        key_id=1, key_type=StringType(),
+        value_id=2, value_type=LongType(),
+        value_required=True
+    )
+    assert types_equivalent(mt1, mt2)

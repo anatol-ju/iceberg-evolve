@@ -1,0 +1,67 @@
+{
+  "type": "struct",
+  "schema-id": 1,
+  "fields": [
+    {
+      "id": 1,
+      "name": "user_id",
+      "required": true,
+      "type": "int"
+    },
+    {
+      "id": 2,
+      "name": "username_new",
+      "required": true,
+      "type": "string"
+    },
+    {
+      "id": 3,
+      "name": "signup_date",
+      "required": false,
+      "type": "timestamp"
+    },
+    {
+      "id": 5,
+      "name": "metadata",
+      "required": false,
+      "type": {
+        "type": "struct",
+        "fields": [
+          {
+            "id": 6,
+            "name": "login_attempts",
+            "required": false,
+            "type": {
+              "type": "list",
+              "element-id": 7,
+              "element-required": false,
+              "element": {
+                "type": "struct",
+                "fields": [
+                  {
+                    "id": 8,
+                    "name": "timestamp",
+                    "required": false,
+                    "type": "long"
+                  },
+                  {
+                    "id": 9,
+                    "name": "success",
+                    "required": false,
+                    "type": "boolean"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": 10,
+      "name": "is_active",
+      "required": false,
+      "type": "boolean"
+    }
+  ]
+}
