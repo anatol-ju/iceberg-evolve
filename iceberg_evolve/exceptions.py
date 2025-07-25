@@ -10,3 +10,9 @@ class CatalogLoadError(Exception):
         super().__init__(message)
         self.table = table
         self.catalog = catalog
+
+class UnsupportedSchemaEvolutionWarning(UserWarning):
+    """Raised when an unsupported schema evolution operation is attempted."""
+    def __init__(self, message: str):
+        super().__init__(message)
+        self.message = message

@@ -285,17 +285,17 @@ def test_schema_diff_display_output():
     assert "REMOVED:" not in output  # or adjust based on your schema
     assert "- is_active:" in output
 
-def test_apply_evolution_ops_round_trip():
+def test_apply_evolution_ops_round_trip(setup_iceberg_table):
     """
     Apply evolution operations to the original schema and verify it becomes the expected schema.
     """
     original = EvolveSchema.from_file("examples/users_current.iceberg.json")
     expected = EvolveSchema.from_file("examples/users_new.iceberg.json")
 
-    diff = SchemaDiff.from_schemas(original, expected)
-    ops = diff.to_evolution_operations()
+    catalog, table_identifier = setup_iceberg_table
+    table = catalog.load_table(table_identifier)
 
-    evolved_schema = original.evolve(ops=ops, allow_breaking=True)
+    evolved_schema = original.evolve(new=expected, table=table, allow_breaking=True)
 
     new_diff = SchemaDiff.from_schemas(evolved_schema, expected)
 

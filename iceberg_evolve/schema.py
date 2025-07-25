@@ -52,6 +52,7 @@ Examples:
     )
 """
 import json
+import warnings
 
 from pyiceberg.catalog import load_catalog
 from pyiceberg.schema import Schema as IcebergSchema
@@ -60,7 +61,11 @@ from rich.console import Console
 
 from iceberg_evolve.diff import SchemaDiff
 from iceberg_evolve.evolution_operation import UnionSchema
-from iceberg_evolve.exceptions import CatalogLoadError, SchemaParseError
+from iceberg_evolve.exceptions import (
+    CatalogLoadError,
+    SchemaParseError,
+    UnsupportedSchemaEvolutionWarning
+)
 from iceberg_evolve.utils import IcebergSchemaSerializer
 
 
@@ -186,6 +191,14 @@ class Schema:
         for op in ops:
             if isinstance(op, UnionSchema):
                 raise NotImplementedError("UnionSchema operation is not supported in evolve().")
+
+            if hasattr(op, "is_supported") and not op.is_supported():
+                warnings.warn(
+                    f"Skipping unsupported operation for field '{op.name}'.\n"
+                    "Iceberg does not support changing nested types directly.\n"
+                    "Suggested workaround: add a new column with the desired structure and migrate the data.",
+                    UnsupportedSchemaEvolutionWarning
+                )
 
         # Display the diff and operations if not in quiet mode
         if not quiet or dry_run:

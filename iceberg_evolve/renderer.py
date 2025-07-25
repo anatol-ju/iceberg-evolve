@@ -143,7 +143,7 @@ class EvolutionOperationsRenderer:
         Render evolution operations with nested colored diffs for UpdateColumn.
         """
         prev_type = None
-
+        has_unsupported = False
         for op in self.ops:
             current_type = type(op)
             # blank line between different operation types
@@ -158,3 +158,14 @@ class EvolutionOperationsRenderer:
             if isinstance(op, UpdateColumn) and getattr(op, "nested_changes", None):
                 diff = SchemaDiff(added=[], removed=[], changed=op.nested_changes)
                 SchemaDiffRenderer(diff, self.console).display()
+
+            if not op.is_supported:
+                has_unsupported = True
+
+        if has_unsupported:
+            self.console.print(
+                "\n[bold yellow]⚠️ Warning:[/bold yellow] Some operations are not supported (yet) and will be skipped."
+            )
+            self.console.print(
+                "Consider adding new columns with the desired structure and migrating data manually.\n"
+            )

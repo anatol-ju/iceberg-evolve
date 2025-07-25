@@ -1,10 +1,11 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from pyiceberg.table.update.schema import UpdateSchema
 from pyiceberg.types import IcebergType, StructType, ListType
 from rich.console import Console
 from rich.tree import Tree
-
+import warnings
+from iceberg_evolve.exceptions import UnsupportedSchemaEvolutionWarning
 from iceberg_evolve.utils import clean_type_str, is_narrower_than, type_to_tree
 
 
@@ -15,6 +16,10 @@ class BaseEvolutionOperation:
     Defines the common interface for all operations.
     """
     name: str
+    is_supported: bool = field(init=False)
+
+    def __post_init__(self):
+        self.is_supported = True
 
     def to_serializable_dict(self) -> dict:
         raise NotImplementedError
@@ -40,6 +45,7 @@ class AddColumn(BaseEvolutionOperation):
 
     Attributes:
         name (str): The name of the new column.
+        is_supported (bool): Indicates if the operation is supported (by either this tool or PyIceberg).
         new_type (IcebergType): The type of the new column.
         doc (str | None): Optional documentation for the new column.
     """
@@ -63,6 +69,8 @@ class AddColumn(BaseEvolutionOperation):
             label = "[green bold]ADD[/green bold]"
         else:
             label = "ADD"
+        if not self.is_supported:
+            label += " ⚠️"
         tree = Tree(label)
         tree.add(f"[green3]+ {self.name}[/green3]: {clean_type_str(self.new_type)}")
         return tree
@@ -74,6 +82,12 @@ class AddColumn(BaseEvolutionOperation):
         Args:
             update (UpdateSchema): The schema update object to apply the operation to.
         """
+        if not self.is_supported:
+            warnings.warn(
+                f"Skipping unsupported operation: {self.__class__.__name__} on '{self.name}' is not supported.",
+                UnsupportedSchemaEvolutionWarning
+            )
+            return
         path = tuple(self.name.split(".")) if "." in self.name else self.name
         update.add_column(path, self.new_type, doc=self.doc)
 
@@ -85,6 +99,7 @@ class DropColumn(BaseEvolutionOperation):
 
     Attributes:
         name (str): The name of the column to drop.
+        is_supported (bool): Indicates if the operation is supported (by either this tool or PyIceberg).
     """
     def to_serializable_dict(self) -> dict:
         """
@@ -101,6 +116,8 @@ class DropColumn(BaseEvolutionOperation):
             label = "[red bold]DROP[/red bold]"
         else:
             label = "DROP"
+        if not self.is_supported:
+            label += " ⚠️"
         tree = Tree(label)
         tree.add(f"[red]- {self.name}[/red]")
         return tree
@@ -112,6 +129,12 @@ class DropColumn(BaseEvolutionOperation):
         Args:
             update (UpdateSchema): The schema update object to apply the operation to.
         """
+        if not self.is_supported:
+            warnings.warn(
+                f"Skipping unsupported operation: {self.__class__.__name__} on '{self.name}' is not supported.",
+                UnsupportedSchemaEvolutionWarning
+            )
+            return
         path = tuple(self.name.split(".")) if "." in self.name else self.name
         update.delete_column(path)
 
@@ -133,6 +156,7 @@ class UpdateColumn(BaseEvolutionOperation):
 
     Attributes:
         name (str): The name of the column to update.
+        is_supported (bool): Indicates if the operation is supported (by either this tool or PyIceberg).
         current_type (IcebergType): The current type of the column.
         new_type (IcebergType): The new type of the column.
         doc (str | None): Optional documentation for the column.
@@ -140,6 +164,9 @@ class UpdateColumn(BaseEvolutionOperation):
     current_type: IcebergType
     new_type: IcebergType
     doc: str | None = None
+
+    def __post_init__(self):
+        self.is_supported = self.new_type.is_primitive
 
     def to_serializable_dict(self) -> dict:
         """
@@ -159,6 +186,8 @@ class UpdateColumn(BaseEvolutionOperation):
             label = "[yellow bold]UPDATE[/yellow bold]"
         else:
             label = "UPDATE"
+        if not self.is_supported:
+            label += " ⚠️"
         tree = Tree(label)
         node = tree.add(f"[yellow]~ {self.name}[/yellow]:")
         # from
@@ -183,6 +212,14 @@ class UpdateColumn(BaseEvolutionOperation):
             update (UpdateSchema): The schema update object to apply the operation to.
         """
         path = tuple(self.name.split(".")) if "." in self.name else self.name
+        if not self.is_supported:
+            warnings.warn(
+                f"Skipping unsupported operation: {self.__class__.__name__} on '{self.name}' is not supported.",
+                "Iceberg does not support changing nested types directly.\n"
+                "Suggested workaround: add a new column with the desired structure and migrate the data.",
+                UnsupportedSchemaEvolutionWarning
+            )
+            return
         update.update_column(path, field_type=self.new_type)
 
     def is_breaking(self) -> bool:
@@ -203,6 +240,7 @@ class RenameColumn(BaseEvolutionOperation):
 
     Attributes:
         name (str): The current name of the column.
+        is_supported (bool): Indicates if the operation is supported (by either this tool or PyIceberg).
         target (str): The new name for the column.
     """
     target: str
@@ -223,6 +261,8 @@ class RenameColumn(BaseEvolutionOperation):
             label = "[cyan bold]RENAME[/cyan bold]"
         else:
             label = "RENAME"
+        if not self.is_supported:
+            label += " ⚠️"
         tree = Tree(label)
         subtree = tree.add(f"[cyan1]~ {self.name}[/cyan1]")
         subtree.add(f"to: {self.target}")
@@ -235,6 +275,12 @@ class RenameColumn(BaseEvolutionOperation):
         Args:
             update (UpdateSchema): The schema update object to apply the operation to.
         """
+        if not self.is_supported:
+            warnings.warn(
+                f"Skipping unsupported operation: {self.__class__.__name__} on '{self.name}' is not supported.",
+                UnsupportedSchemaEvolutionWarning
+            )
+            return
         path = tuple(self.name.split(".")) if "." in self.name else self.name
         update.rename_column(path, self.target)
 
@@ -246,6 +292,7 @@ class MoveColumn(BaseEvolutionOperation):
 
     Attributes:
         name (str): The name of the column to move.
+        is_supported (bool): Indicates if the operation is supported (by either this tool or PyIceberg).
         target (str): The target column name to move before or after.
         position (str): The position to move the column to ("first", "before", or "after").
     """
@@ -269,6 +316,8 @@ class MoveColumn(BaseEvolutionOperation):
             label = "[magenta bold]MOVE[/magenta bold]"
         else:
             label = "MOVE"
+        if not self.is_supported:
+            label += " ⚠️"
         tree = Tree(label)
         subtree = tree.add(f"[magenta3]~ {self.name}[/magenta3]")
         subtree.add(f"from: {self.position}")
@@ -282,6 +331,12 @@ class MoveColumn(BaseEvolutionOperation):
         Args:
             update (UpdateSchema): The schema update object to apply the operation to.
         """
+        if not self.is_supported:
+            warnings.warn(
+                f"Skipping unsupported operation: {self.__class__.__name__} on '{self.name}' is not supported.",
+                UnsupportedSchemaEvolutionWarning
+            )
+            return
         path = tuple(self.name.split(".")) if "." in self.name else self.name
         if self.position == "first":
             update.move_first(path)
@@ -297,9 +352,14 @@ class UnionSchema(BaseEvolutionOperation):
     Represents an operation to union a new schema with the current schema.
 
     Attributes:
+        name (str): The name of the schema to union with.
+        is_supported (bool): Indicates if the operation is supported (by either this tool or Py
         new_type (IcebergType): The new type to union with the current schema.
     """
     new_type: IcebergType
+
+    def __post_init__(self):
+        self.is_supported = False
 
     def to_serializable_dict(self) -> dict:
         """
@@ -316,6 +376,8 @@ class UnionSchema(BaseEvolutionOperation):
             label = "[blue bold]UNION SCHEMA[/blue bold]"
         else:
             label = "UNION SCHEMA"
+        if not self.is_supported:
+            label += " ⚠️"
         tree = Tree(label)
         subtree = tree.add(f"[blue3]~ {self.name}[/blue3]:")
         subtree.add(f"with type: {clean_type_str(self.new_type)}")
@@ -329,4 +391,11 @@ class UnionSchema(BaseEvolutionOperation):
         Args:
             update (UpdateSchema): The schema update object to apply the operation to.
         """
+        if not self.is_supported:
+            warnings.warn(
+                f"Skipping unsupported operation: {self.__class__.__name__} on '{self.name}' is not supported.",
+                "This feature is in development and not yet implemented.",
+                UnsupportedSchemaEvolutionWarning
+            )
+            return
         update.union_by_name(self.new_type)
