@@ -18,7 +18,7 @@
             "id": 3,
             "name": "signup",
             "required": false,
-            "type": "long"
+            "type": "date"
         },
         {
             "id": 4,

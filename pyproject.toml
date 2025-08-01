@@ -39,6 +39,8 @@ dev = [
 
 [tool.pytest.ini_options]
 addopts = "--cov --cov-report term-missing"
+# Ignore this because it contains a conftest.py file
+norecursedirs = ["pg-data"]
 
 [tool.coverage.run]
 omit = [

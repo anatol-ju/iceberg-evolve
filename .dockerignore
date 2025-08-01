@@ -7,3 +7,6 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .cache/
+
+# Postgres data directory
+pg-data/

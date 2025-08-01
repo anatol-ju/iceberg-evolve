@@ -221,26 +221,96 @@ class SchemaDiff:
 
         return SchemaDiff(added=added, removed=removed, changed=changed)
 
+    @staticmethod
+    def union_by_name(current: "Schema", new: "Schema") -> "SchemaDiff":
+        """
+        Create a SchemaDiff that represents the union of two schemas by name.
+        This is useful for cases where you want to merge schemas without considering IDs.
+
+        Args:
+            current (Schema): The current schema.
+            new (Schema): The new schema to compare against.
+
+        Returns:
+            SchemaDiff: The differences between the two schemas, treating them as unions by name.
+        """
+        # Map by name, ignoring IDs
+        current_by_name = {f.name: f for f in current.fields}
+        new_by_name     = {f.name: f for f in new.fields}
+
+        added, changed = [], []
+
+        # Added fields (in new only)
+        for name, nf in new_by_name.items():
+            if name not in current_by_name:
+                added.append(FieldChange(
+                    name=name,
+                    new_type=nf.field_type,
+                    change="added"
+                ))
+
+        # Updates for fields in both
+        for name in new_by_name.keys() & current_by_name.keys():
+            cf, nf = current_by_name[name], new_by_name[name]
+            if not types_equivalent(cf.field_type, nf.field_type):
+                # You could choose UpdateColumn or a UnionSchema op here
+                changed.append(FieldChange(
+                    name=name,
+                    current_type=cf.field_type,
+                    new_type=nf.field_type,
+                    change="type_changed"
+                ))
+
+        # No removals for union!
+        return SchemaDiff(added=added, removed=[], changed=changed)
+
     def to_evolution_operations(self) -> list[BaseEvolutionOperation]:
         """
-        Convert this SchemaDiff into a list of evolution operations that can be applied to an Iceberg schema.
+        Convert this SchemaDiff into a list of evolution operations in a dependency-safe order.
+        This means renames and updates will be applied before adds, drops, and moves.
+        By applying this strategy, we ensure that the schema evolution is safe and respects dependencies.
+
+        If this is not enforced, a scenario could arise where, for example, a column is moved before
+        it is renamed, therefore causing the move to reference the old name, which would fail.
+
+        Returns:
+            list[BaseEvolutionOperation]: A list of evolution operations to apply, sorted by priority.
         """
         ops: list[BaseEvolutionOperation] = []
 
-        for fc in self.added:
-            ops.append(AddColumn(name=fc.name, new_type=fc.new_type, doc=fc.doc))
-
-        for fc in self.removed:
-            ops.append(DropColumn(name=fc.name))
-
+        # 1) Renames
         for fc in self.changed:
             if fc.change == "renamed":
                 ops.append(RenameColumn(name=fc.previous_name or "", target=fc.name))
-            elif fc.change == "type_changed":
-                ops.append(UpdateColumn(name=fc.name, current_type=fc.current_type, new_type=fc.new_type, doc=fc.doc))
-            elif fc.change == "doc_changed":
-                ops.append(UpdateColumn(name=fc.name, current_type=fc.current_type, new_type=fc.new_type, doc=fc.doc))
-            elif fc.change == "moved":
-                ops.append(MoveColumn(name=fc.name, target=fc.relative_to or "", position=fc.position or "after"))
+
+        # 2) Type & doc updates
+        for fc in self.changed:
+            if fc.change in ("type_changed", "doc_changed"):
+                ops.append(
+                    UpdateColumn(
+                        name=fc.name,
+                        current_type=fc.current_type,
+                        new_type=fc.new_type,
+                        doc=fc.doc
+                    )
+                )
+
+        # 3) Adds
+        for fc in self.added:
+            ops.append(AddColumn(name=fc.name, new_type=fc.new_type, doc=fc.doc))
+
+        # 4) Drops
+        for fc in self.removed:
+            ops.append(DropColumn(name=fc.name))
+
+        # 5) Moves
+        for fc in self.changed:
+            if fc.change == "moved":
+                ops.append(MoveColumn(
+                    name=fc.name,
+                    target=fc.relative_to or "",
+                    position=fc.position or "after"
+                ))
 
         return ops
+

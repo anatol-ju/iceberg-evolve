@@ -214,9 +214,11 @@ class UpdateColumn(BaseEvolutionOperation):
         path = tuple(self.name.split(".")) if "." in self.name else self.name
         if not self.is_supported:
             warnings.warn(
-                f"Skipping unsupported operation: {self.__class__.__name__} on '{self.name}' is not supported.",
-                "Iceberg does not support changing nested types directly.\n"
-                "Suggested workaround: add a new column with the desired structure and migrate the data.",
+                (
+                    f"Skipping unsupported operation: {self.__class__.__name__} on '{self.name}' is not supported.\n"
+                    "Iceberg does not support changing nested types directly.\n"
+                    "Suggested workaround: add a new column with the desired structure and migrate the data."
+                ),
                 UnsupportedSchemaEvolutionWarning
             )
             return
@@ -393,8 +395,10 @@ class UnionSchema(BaseEvolutionOperation):
         """
         if not self.is_supported:
             warnings.warn(
-                f"Skipping unsupported operation: {self.__class__.__name__} on '{self.name}' is not supported.",
-                "This feature is in development and not yet implemented.",
+                (
+                    f"Skipping unsupported operation: {self.__class__.__name__} on '{self.name}' is not supported.\n"
+                    "This feature is in development and not yet implemented."
+                ),
                 UnsupportedSchemaEvolutionWarning
             )
             return

@@ -296,12 +296,23 @@ def test_union_schema_pretty_returns_tree():
     assert "merged" in tree.children[0].label
     assert any("with type: struct<>" in child.label for child in tree.children[0].children)
 
-def test_union_schema_apply_calls_union_by_name(mock_update_schema):
-    """Test UnionSchema.apply calls update.union_by_name with new_type."""
+
+def test_union_schema_apply_warns_when_unsupported(mock_update_schema):
+    """UnionSchema.apply should warn and not call union_by_name when unsupported."""
+    import pytest
+    from iceberg_evolve.exceptions import UnsupportedSchemaEvolutionWarning
+    from pyiceberg.types import StructType
+    from iceberg_evolve.evolution_operation import UnionSchema
+
     new_type = StructType()
     op = UnionSchema(name="merged", new_type=new_type)
-    op.apply(mock_update_schema)
-    mock_update_schema.union_by_name.assert_called_once_with(new_type)
+
+    with pytest.warns(UnsupportedSchemaEvolutionWarning,
+                      match="Skipping unsupported operation: UnionSchema on 'merged'"):
+        op.apply(mock_update_schema)
+
+    # Since it’s unsupported, it must not invoke the catalog call
+    assert not mock_update_schema.union_by_name.called
 
 
 # Additional tests for .pretty(use_color=True) for all subclasses of BaseEvolutionOperation

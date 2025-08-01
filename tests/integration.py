@@ -1,11 +1,13 @@
 import json
 import pathlib
 import pytest
+import warnings
 from pyiceberg.catalog import load_catalog
+from iceberg_evolve import diff
 from iceberg_evolve.schema import Schema as EvolveSchema
 from iceberg_evolve.diff import SchemaDiff
 from iceberg_evolve.evolution_operation import RenameColumn, UpdateColumn
-from pyiceberg.types import BooleanType, StringType, ListType
+from pyiceberg.types import BooleanType, StringType, ListType, TimestampType
 from rich.console import Console
 
 
@@ -152,7 +154,7 @@ def test_schema_diff_all_operation_types(setup_iceberg_table):
     # Basic assumptions for this test case
     assert any(op.name == "is_active" for op in diff.added), "Expected 'is_active' to be added"
     assert any(op.name == "comments" for op in diff.removed), "Expected 'comments' to be removed"
-    assert any(op.name == "signup_date" and op.current_type != op.new_type for op in diff.changed), "Expected 'signup_date' type to change"
+    assert any(op.name == "signup_datetime" and op.current_type != op.new_type for op in diff.changed), "Expected 'signup_datetime' type to change"
     assert any(op.name == "email" and hasattr(op, "previous_name") for op in diff.changed), "Expected 'email' to be renamed"
     assert any(op.name == "metadata.login_attempts" and isinstance(op.new_type, ListType) for op in diff.changed), "Expected 'metadata.login_attempts' to be updated to struct"
 
@@ -162,7 +164,7 @@ def test_schema_diff_all_operation_types(setup_iceberg_table):
 
     assert any(isinstance(op, AddColumn) and op.name == "is_active" for op in ops)
     assert any(isinstance(op, DropColumn) and op.name == "comments" for op in ops)
-    assert any(isinstance(op, UpdateColumn) and op.name == "signup_date" for op in ops)
+    assert any(isinstance(op, UpdateColumn) and op.name == "signup_datetime" for op in ops)
     assert any(isinstance(op, RenameColumn) and op.name == "email_address" and op.target == "email" for op in ops)
     assert any(isinstance(op, MoveColumn) and op.name == "username" for op in ops)
 
@@ -245,14 +247,16 @@ def test_schema_diff_union_behavior():
     old = EvolveSchema.from_file("examples/users_current.iceberg.json")
     new = EvolveSchema.from_file("examples/users_union_candidate.iceberg.json")  # <- new fields, different IDs
 
-    diff = SchemaDiff.from_schemas(old, new)
+    diff = SchemaDiff.union_by_name(old, new)
     diff.display()
 
-    assert any(fc.name == "some_field" and fc.change == "added" for fc in diff.added)
+    diff = SchemaDiff.union_by_name(old, new)
+    assert "new_address" in [f.name for f in diff.added]
+
 
 def test_schema_diff_rename_and_type_change():
     """
-    Test that SchemaDiff correctly handles a rename + type change on the same field ID.
+    Test that SchemaDiff correctly handles a rename AND type change on the same field ID.
     """
     original = EvolveSchema.from_file("examples/users_current.iceberg.json")
     modified = EvolveSchema.from_file("examples/users_renamed_and_changed.iceberg.json")
@@ -260,13 +264,13 @@ def test_schema_diff_rename_and_type_change():
     diff = SchemaDiff.from_schemas(original, modified)
     diff.display()
 
-    assert any(fc.change == "renamed" and fc.previous_name == "old_field" for fc in diff.changed)
-    assert any(fc.change == "type_changed" and fc.name == "new_field" for fc in diff.changed)
+    assert any(fc.change == "renamed" and fc.previous_name == "signup" for fc in diff.changed)
+    assert any(fc.change == "type_changed" and fc.name == "signup_ts" for fc in diff.changed)
 
     # Optional: validate operations list too
     ops = diff.to_evolution_operations()
-    assert any(isinstance(op, RenameColumn) and op.name == "old_field" and op.target == "new_field" for op in ops)
-    assert any(isinstance(op, UpdateColumn) and op.name == "new_field" for op in ops)
+    assert any(isinstance(op, RenameColumn) and op.name == "signup" and op.target == "signup_ts" for op in ops)
+    assert any(isinstance(op, UpdateColumn) and op.name == "signup_ts" for op in ops)
 
 def test_schema_diff_display_output():
     """
@@ -281,24 +285,73 @@ def test_schema_diff_display_output():
     diff.display(console)
     output = console.export_text()
 
-    assert "ADDED:" in output
-    assert "REMOVED:" not in output  # or adjust based on your schema
-    assert "- is_active:" in output
+    assert "ADDED" in output
+    assert "REMOVED" in output
+    assert "+ is_active:" in output
+
 
 def test_apply_evolution_ops_round_trip(setup_iceberg_table):
     """
-    Apply evolution operations to the original schema and verify it becomes the expected schema.
+    1. Load the “current” and “new” schemas from your JSON files.
+    2. Apply evolve(..., allow_breaking=True, return_applied_schema=True).
+    3. Capture exactly two UnsupportedSchemaEvolutionWarnings for nested structs.
+    4. Assert the live table's field set & types match the expected.
+    5. Run a name-based diff and assert only 'metadata' remains in changed.
     """
+    # 1) Load schemas
     original = EvolveSchema.from_file("examples/users_current.iceberg.json")
     expected = EvolveSchema.from_file("examples/users_new.iceberg.json")
 
-    catalog, table_identifier = setup_iceberg_table
-    table = catalog.load_table(table_identifier)
+    catalog, table_id = setup_iceberg_table
+    table = catalog.load_table(table_id)
 
-    evolved_schema = original.evolve(new=expected, table=table, allow_breaking=True)
+    # 2) Evolve + capture warnings
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        evolved = original.evolve(
+            new=expected,
+            table=table,
+            allow_breaking=True,
+            return_applied_schema=True,
+            quiet=False
+        )
 
-    new_diff = SchemaDiff.from_schemas(evolved_schema, expected)
+    # 3) Exactly two nested-struct warnings should have been emitted
+    assert len(w) == 2
+    messages = [str(wi.message) for wi in w]
+    assert any("metadata" in msg and "nested" in msg.lower() for msg in messages)
+    assert any("metadata.login_attempts" in msg for msg in messages)
 
-    assert new_diff.added == []
-    assert new_diff.removed == []
-    assert new_diff.changed == []
+    # 4) Spot-check that supported changes really took effect
+    evolved_names = {f.name for f in evolved.schema.fields}
+    expected_names = {f.name for f in expected.schema.fields}
+    # field‐set matches
+    assert evolved_names == expected_names
+
+    # rename: signup → signup_datetime
+    assert "signup_datetime" in evolved_names and "signup" not in evolved_names
+    # type promotion: signup_datetime is timestamp
+    fld = evolved.schema.find_field("signup_datetime")
+    assert isinstance(fld.field_type, TimestampType)
+
+    # rename: email_address → email
+    assert "email" in evolved_names and "email_address" not in evolved_names
+
+    # add: is_active
+    assert "is_active" in evolved_names
+    # drop: comments
+    assert "comments" not in evolved_names
+
+    # move: username after signup_date
+    fields = [f.name for f in evolved.schema.fields]
+    # 1) username follows signup_date
+    idx_signup = fields.index("signup_datetime")
+    assert fields[idx_signup + 1] == "username"
+    # 2) is_active is last
+    assert fields[-1] == "is_active"
+
+    # 5) Name-based diff: only top-level 'metadata' remains unmatched
+    post = SchemaDiff.union_by_name(evolved, expected)
+    assert post.added   == []
+    assert post.removed == []
+    assert {fc.name for fc in post.changed} == {"metadata"}

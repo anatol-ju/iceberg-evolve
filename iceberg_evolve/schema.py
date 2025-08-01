@@ -47,12 +47,11 @@ Examples:
         catalog="glue",
         config={
             "type": "glue",
-            "region": "us-west-2"
+            "region": "eu-west-2"
         }
     )
 """
 import json
-import warnings
 
 from pyiceberg.catalog import load_catalog
 from pyiceberg.schema import Schema as IcebergSchema
@@ -60,13 +59,13 @@ from pyiceberg.table import Table
 from rich.console import Console
 
 from iceberg_evolve.diff import SchemaDiff
-from iceberg_evolve.evolution_operation import UnionSchema
-from iceberg_evolve.exceptions import (
-    CatalogLoadError,
-    SchemaParseError,
-    UnsupportedSchemaEvolutionWarning
+from iceberg_evolve.evolution_operation import (
+    MoveColumn,
+    RenameColumn,
+    UnionSchema
 )
-from iceberg_evolve.utils import IcebergSchemaSerializer
+from iceberg_evolve.exceptions import CatalogLoadError, SchemaParseError
+from iceberg_evolve.utils import IcebergSchemaSerializer, open_update_context
 
 
 class Schema:
@@ -192,14 +191,6 @@ class Schema:
             if isinstance(op, UnionSchema):
                 raise NotImplementedError("UnionSchema operation is not supported in evolve().")
 
-            if hasattr(op, "is_supported") and not op.is_supported():
-                warnings.warn(
-                    f"Skipping unsupported operation for field '{op.name}'.\n"
-                    "Iceberg does not support changing nested types directly.\n"
-                    "Suggested workaround: add a new column with the desired structure and migrate the data.",
-                    UnsupportedSchemaEvolutionWarning
-                )
-
         # Display the diff and operations if not in quiet mode
         if not quiet or dry_run:
             console.print("\n[bold]Schema Evolution Diff:[/bold]\n")
@@ -212,8 +203,8 @@ class Schema:
             console.print("[bold]Dry Run - No Changes Applied[/bold]")
             return self
 
-        breaking_ops = [op for op in ops if op.is_breaking()]
-        non_breaking_ops = [op for op in ops if not op.is_breaking()]
+        allowed_ops = [op for op in ops if not op.is_breaking() or allow_breaking]
+        breaking_ops = [op for op in ops if op.is_breaking() and not allow_breaking]
 
         # Filter breaking operations if not allowed
         if not allow_breaking and breaking_ops:
@@ -222,22 +213,54 @@ class Schema:
                 op.display(console)
             raise ValueError("Breaking changes are not allowed unless 'allow_breaking=True'.")
 
-        # Apply the evolution operations
-        with table.update_schema() as update:
-            for op in non_breaking_ops:
-                op.apply(update)
-            if allow_breaking:
-                for op in breaking_ops:
-                    op.apply(update)
+        # Apply the evolution operations in three phases
+        phase1 = [op for op in allowed_ops if isinstance(op, RenameColumn)]
+        phase3 = [op for op in allowed_ops if isinstance(op, MoveColumn)]
+        phase2 = [op for op in allowed_ops if op not in phase1 and op not in phase3]
 
-        console.print("[bold]Schema Evolution Applied Successfully[/bold]")
+        # Apply all renames first
+        console.print("[bold]Applying Renames...[/bold]")
+        if not quiet:
+            for op in phase1:
+                op.display(console)
+
+        with open_update_context(table, allow_breaking) as update:
+            for op in phase1:
+                op.apply(update)
+
+        # Re-fetch so renames/adds/etc are visible
+        table = table.catalog.load_table(table.name())
+
+        # Apply adds, updates, and drops next
+        console.print("[bold]Applying Adds, Updates, and Drops...[/bold]")
+        if not quiet:
+            for op in phase2:
+                op.display(console)
+
+        with open_update_context(table, allow_breaking) as update:
+            for op in phase2:
+                op.apply(update)
+
+        # Re-fetch again to ensure the schema is up-to-date
+        table = table.catalog.load_table(table.name())
+
+        # Apply moves last
+        console.print("[bold]Applying Moves...[/bold]")
+        if not quiet:
+            for op in phase3:
+                op.display(console)
+
+        with open_update_context(table, allow_breaking) as update:
+            for op in phase3:
+                op.apply(update)
+
+        console.print("[bold]Schema Evolution Applied Successfully![/bold]")
 
         result = self
         if return_applied_schema:
-            console.print("[bold]Fetching Evolved Schema from Table[/bold]")
+            console.print("[bold]Fetching Evolved Schema from Table.[/bold]")
             catalog = table.catalog
-            identifier = table.identifier()
-            new_table = catalog.load_table(identifier)
+            new_table = catalog.load_table(table.name())
             result = Schema(new_table.schema())
 
         return result

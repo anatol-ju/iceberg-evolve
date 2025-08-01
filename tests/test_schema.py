@@ -148,6 +148,8 @@ class DummyTable:
     def __init__(self):
         self.catalog = self
         # For catalog.load_table
+    def name(self):
+        return "dummy_name"
     def load_table(self, identifier):
         return self
     def identifier(self):
@@ -305,8 +307,9 @@ def test_evolve_return_applied_schema(monkeypatch):
             "display": lambda self, console: None
         })())
     )
-    # Monkeypatch load_table on catalog to return a table whose schema is new_iceberg
-    fetch_table.load_table = lambda ident: type("T", (), {"schema": lambda self: new_iceberg})()
+    # Monkeypatch load_table on catalog to return the same FetchTable (so it still has update_schema)
+    fetch_table.load_table = lambda ident: fetch_table
+
     sc_module.Table = FetchTable
     result = orig_schema.evolve(new=orig_schema, table=fetch_table, return_applied_schema=True)
     assert isinstance(result, EvolveSchema)

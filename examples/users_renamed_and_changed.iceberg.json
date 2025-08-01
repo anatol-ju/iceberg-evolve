@@ -16,13 +16,13 @@
         },
         {
             "id": 3,
-            "name": "signup",
+            "name": "signup_ts",
             "required": false,
-            "type": "long"
+            "type": "int"
         },
         {
             "id": 4,
-            "name": "email",
+            "name": "email_address",
             "required": true,
             "type": "string"
         },

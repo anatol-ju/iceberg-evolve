@@ -1,24 +1,13 @@
 import re
-from rich.tree import Tree
-from pyiceberg.schema import Schema as IcebergSchema
 
-from pyiceberg.types import (
-    BinaryType,
-    BooleanType,
-    DateType,
-    DecimalType,
-    DoubleType,
-    FloatType,
-    IcebergType,
-    IntegerType,
-    ListType,
-    LongType,
-    MapType,
-    NestedField,
-    StringType,
-    StructType,
-    TimestampType
-)
+from pyiceberg.schema import Schema as IcebergSchema
+from pyiceberg.table import Table
+from pyiceberg.table.update.schema import UpdateSchema
+from pyiceberg.types import (BinaryType, BooleanType, DateType, DecimalType,
+                             DoubleType, FloatType, IcebergType, IntegerType,
+                             ListType, LongType, MapType, NestedField,
+                             StringType, StructType, TimestampType, TimeType)
+from rich.tree import Tree
 
 # consolidated mapping for primitive types used in both SQL and JSON parsing
 _PRIMITIVE_TYPES = {
@@ -32,6 +21,7 @@ _PRIMITIVE_TYPES = {
     "boolean": BooleanType(),
     "bool": BooleanType(),
     "date": DateType(),
+    "time": TimeType(),
     "timestamp": TimestampType(),
     "binary": BinaryType(),
 }
@@ -522,3 +512,22 @@ def types_equivalent(a: IcebergType, b: IcebergType) -> bool:
     ca = canonicalize_type(a)
     cb = canonicalize_type(b)
     return ca == cb
+
+
+def open_update_context(table: Table, allow_incompatible_changes: bool) -> UpdateSchema:
+    """
+    Open an update context for the given table, allowing for schema changes.
+    This function abstracts the update context creation to handle both
+    PyIceberg versions that support `allow_incompatible_changes` and those that do not.
+
+    Args:
+        table (Table): The Iceberg table to update.
+        allow_incompatible_changes (bool): Whether to allow incompatible schema changes.
+
+    Returns:
+        UpdateSchema: The context for updating the table schema.
+    """
+    try:
+        return table.update_schema(allow_incompatible_changes=allow_incompatible_changes)
+    except TypeError:
+        return table.update_schema()
