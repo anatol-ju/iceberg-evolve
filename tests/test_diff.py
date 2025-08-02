@@ -1,9 +1,15 @@
 import sys
 
 import pytest
-from pyiceberg.types import IntegerType, ListType, NestedField, StringType, StructType
+from pyiceberg.types import (
+    IntegerType,
+    ListType,
+    NestedField,
+    StringType,
+    StructType
+)
 
-from iceberg_evolve.diff import SchemaDiff
+from iceberg_evolve.diff import FieldChange, SchemaDiff
 from iceberg_evolve.schema import Schema
 
 
@@ -101,7 +107,7 @@ def test_to_evolution_operations_all_cases():
     """Should convert added, removed, renamed, type/doc changed, and moved fields into correct evolution operations."""
     from pyiceberg.types import IntegerType, StringType
     from iceberg_evolve.diff import FieldChange, SchemaDiff
-    from iceberg_evolve.evolution_operation import (
+    from iceberg_evolve.migrate import (
         AddColumn,
         DropColumn,
         RenameColumn,
@@ -146,10 +152,6 @@ def test_str_output_contains_all_sections():
 
 def test_fieldchange_pretty_for_added():
     """Test that FieldChange.pretty() returns expected string for 'added' fields."""
-    from pyiceberg.types import StringType
-
-    from iceberg_evolve.diff import FieldChange
-
     change = FieldChange(
         name="email",
         change="added",
@@ -161,18 +163,12 @@ def test_fieldchange_pretty_for_added():
 
 def test_fieldchange_pretty_for_removed():
     """Test that FieldChange.pretty() returns expected string for 'removed' fields."""
-    from iceberg_evolve.diff import FieldChange
-
     change = FieldChange(name="email", change="removed")
     assert change.pretty() == "email"
 
 
 def test_fieldchange_pretty_for_type_changed():
     """Test that FieldChange.pretty() returns expected string for 'type_changed' fields."""
-    from pyiceberg.types import IntegerType, StringType
-
-    from iceberg_evolve.diff import FieldChange
-
     change = FieldChange(
         name="age",
         change="type_changed",
@@ -185,8 +181,6 @@ def test_fieldchange_pretty_for_type_changed():
 
 def test_fieldchange_pretty_for_doc_changed():
     """Test that FieldChange.pretty() returns expected string for 'doc_changed' fields."""
-    from iceberg_evolve.diff import FieldChange
-
     change = FieldChange(
         name="age",
         change="doc_changed"
@@ -196,8 +190,6 @@ def test_fieldchange_pretty_for_doc_changed():
 
 def test_fieldchange_pretty_for_renamed():
     """Test that FieldChange.pretty() returns expected string for 'renamed' fields."""
-    from iceberg_evolve.diff import FieldChange
-
     change = FieldChange(
         name="full_name",
         change="renamed",
@@ -208,8 +200,6 @@ def test_fieldchange_pretty_for_renamed():
 
 def test_fieldchange_pretty_for_moved():
     """Test that FieldChange.pretty() returns expected string for 'moved' fields."""
-    from iceberg_evolve.diff import FieldChange
-
     change = FieldChange(
         name="address",
         change="moved",
@@ -221,16 +211,12 @@ def test_fieldchange_pretty_for_moved():
 
 def test_fieldchange_pretty_for_unknown_change_type():
     """Test that FieldChange.pretty() returns fallback string for unknown change types."""
-    from iceberg_evolve.diff import FieldChange
-
     change = FieldChange(name="unknown", change="foobar")
     assert str(change) == change.pretty()
 
 
 def test_display_delegates_to_renderer(monkeypatch):
     """Should delegate rendering to SchemaDiffRenderer.display()."""
-    from iceberg_evolve.diff import SchemaDiff
-
     mock_called = {}
 
     class MockRenderer:
@@ -255,17 +241,12 @@ def test_display_delegates_to_renderer(monkeypatch):
     assert mock_called.get("console") == "dummy-console"
 
 
-# Additional test to cover type-checking branch in SchemaDiff.from_schemas
 def test_from_schemas_invalid_types():
     """Test that SchemaDiff.from_schemas raises ValueError for invalid input types."""
-    import pytest
-    from pyiceberg.schema import Schema as PyIcebergSchema
-    from pyiceberg.types import NestedField, StringType
     from iceberg_evolve.schema import Schema as EvolveSchema
-    from iceberg_evolve.diff import SchemaDiff
 
     # Prepare valid schema instances
-    iceberg_schema = PyIcebergSchema(
+    iceberg_schema = Schema(
         NestedField(field_id=1, name="id", field_type=StringType(), required=True)
     )
     evolve_schema = EvolveSchema(iceberg_schema)

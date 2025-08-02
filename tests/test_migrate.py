@@ -1,11 +1,12 @@
-from unittest.mock import MagicMock
 import sys
+from unittest.mock import MagicMock
 
 import pytest
 from pyiceberg.types import IntegerType, LongType, StringType, StructType
 from rich.tree import Tree
 
-from iceberg_evolve.evolution_operation import (
+from iceberg_evolve.exceptions import UnsupportedSchemaEvolutionWarning
+from iceberg_evolve.migrate import (
     AddColumn,
     BaseEvolutionOperation,
     DropColumn,
@@ -14,7 +15,6 @@ from iceberg_evolve.evolution_operation import (
     UnionSchema,
     UpdateColumn
 )
-from iceberg_evolve.exceptions import UnsupportedSchemaEvolutionWarning
 
 
 @pytest.fixture
@@ -303,7 +303,7 @@ def test_union_schema_apply_warns_when_unsupported(mock_update_schema):
     import pytest
     from iceberg_evolve.exceptions import UnsupportedSchemaEvolutionWarning
     from pyiceberg.types import StructType
-    from iceberg_evolve.evolution_operation import UnionSchema
+    from iceberg_evolve.migrate import UnionSchema
 
     new_type = StructType()
     op = UnionSchema(name="merged", new_type=new_type)
@@ -361,7 +361,7 @@ def test_union_schema_pretty_with_color():
 
 
 def test_add_column_pretty_unsupported():
-    from iceberg_evolve.evolution_operation import AddColumn
+    from iceberg_evolve.migrate import AddColumn
     from pyiceberg.types import StringType
     op = AddColumn("foo", StringType())
     op.is_supported = False
@@ -370,7 +370,7 @@ def test_add_column_pretty_unsupported():
 
 
 def test_add_column_apply_unsupported(mock_update_schema):
-    from iceberg_evolve.evolution_operation import AddColumn
+    from iceberg_evolve.migrate import AddColumn
     from pyiceberg.types import StringType
     op = AddColumn("foo", StringType())
     op.is_supported = False
@@ -380,7 +380,7 @@ def test_add_column_apply_unsupported(mock_update_schema):
 
 
 def test_drop_column_pretty_unsupported():
-    from iceberg_evolve.evolution_operation import DropColumn
+    from iceberg_evolve.migrate import DropColumn
     op = DropColumn("bar")
     op.is_supported = False
     tree = op.pretty(use_color=True)
@@ -388,7 +388,7 @@ def test_drop_column_pretty_unsupported():
 
 
 def test_drop_column_apply_unsupported(mock_update_schema):
-    from iceberg_evolve.evolution_operation import DropColumn
+    from iceberg_evolve.migrate import DropColumn
     op = DropColumn("bar")
     op.is_supported = False
     with pytest.warns(UnsupportedSchemaEvolutionWarning):
@@ -397,7 +397,7 @@ def test_drop_column_apply_unsupported(mock_update_schema):
 
 
 def test_update_column_pretty_unsupported():
-    from iceberg_evolve.evolution_operation import UpdateColumn
+    from iceberg_evolve.migrate import UpdateColumn
     from pyiceberg.types import StringType, StructType
     op = UpdateColumn("baz", current_type=StringType(), new_type=StructType())
     # __post_init__ sets is_supported=False for non-primitive new_type
@@ -406,7 +406,7 @@ def test_update_column_pretty_unsupported():
 
 
 def test_update_column_apply_unsupported(mock_update_schema):
-    from iceberg_evolve.evolution_operation import UpdateColumn
+    from iceberg_evolve.migrate import UpdateColumn
     from pyiceberg.types import StringType, StructType
     op = UpdateColumn("baz", current_type=StringType(), new_type=StructType())
     with pytest.warns(UnsupportedSchemaEvolutionWarning):
@@ -415,7 +415,7 @@ def test_update_column_apply_unsupported(mock_update_schema):
 
 
 def test_rename_column_pretty_unsupported():
-    from iceberg_evolve.evolution_operation import RenameColumn
+    from iceberg_evolve.migrate import RenameColumn
     op = RenameColumn("old", target="new")
     op.is_supported = False
     tree = op.pretty(use_color=True)
@@ -423,7 +423,7 @@ def test_rename_column_pretty_unsupported():
 
 
 def test_rename_column_apply_unsupported(mock_update_schema):
-    from iceberg_evolve.evolution_operation import RenameColumn
+    from iceberg_evolve.migrate import RenameColumn
     op = RenameColumn("old", target="new")
     op.is_supported = False
     with pytest.warns(UnsupportedSchemaEvolutionWarning):
@@ -432,7 +432,7 @@ def test_rename_column_apply_unsupported(mock_update_schema):
 
 
 def test_move_column_pretty_unsupported():
-    from iceberg_evolve.evolution_operation import MoveColumn
+    from iceberg_evolve.migrate import MoveColumn
     op = MoveColumn("m", target="t", position="first")
     op.is_supported = False
     tree = op.pretty(use_color=False)
@@ -440,7 +440,7 @@ def test_move_column_pretty_unsupported():
 
 
 def test_move_column_apply_unsupported(mock_update_schema):
-    from iceberg_evolve.evolution_operation import MoveColumn
+    from iceberg_evolve.migrate import MoveColumn
     op = MoveColumn("m", target="t", position="after")
     op.is_supported = False
     with pytest.warns(UnsupportedSchemaEvolutionWarning):
@@ -449,7 +449,7 @@ def test_move_column_apply_unsupported(mock_update_schema):
 
 
 def test_union_schema_apply_supported(mock_update_schema):
-    from iceberg_evolve.evolution_operation import UnionSchema
+    from iceberg_evolve.migrate import UnionSchema
     from pyiceberg.types import StructType
     op = UnionSchema("union_me", new_type=StructType())
     # override to True so we hit the final line 405

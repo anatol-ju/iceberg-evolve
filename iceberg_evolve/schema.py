@@ -53,13 +53,14 @@ Examples:
 """
 import json
 
+from rich.console import Console
+
 from pyiceberg.catalog import load_catalog
 from pyiceberg.schema import Schema as IcebergSchema
 from pyiceberg.table import Table
-from rich.console import Console
 
 from iceberg_evolve.diff import SchemaDiff
-from iceberg_evolve.evolution_operation import (
+from iceberg_evolve.migrate import (
     MoveColumn,
     RenameColumn,
     UnionSchema

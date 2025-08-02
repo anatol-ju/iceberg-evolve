@@ -1,13 +1,15 @@
 import json
 import pathlib
-import pytest
 import warnings
+
+import pytest
 from pyiceberg.catalog import load_catalog
-from pyiceberg.types import BooleanType, StringType, ListType, TimestampType, IntegerType, NestedField
+from pyiceberg.types import BooleanType, IntegerType, ListType, NestedField, StringType, TimestampType
 from rich.console import Console
-from iceberg_evolve.schema import Schema as EvolveSchema
+
 from iceberg_evolve.diff import SchemaDiff
-from iceberg_evolve.evolution_operation import RenameColumn, UpdateColumn
+from iceberg_evolve.migrate import RenameColumn, UpdateColumn
+from iceberg_evolve.schema import Schema as EvolveSchema
 
 
 
@@ -18,6 +20,7 @@ from iceberg_evolve.evolution_operation import RenameColumn, UpdateColumn
 # with correct Iceberg-style schema including field-ids
 
 
+@pytest.mark.integration
 def test_schema_diff_sanity_check():
     """
     Sanity check to ensure SchemaDiff uses field IDs for comparison, not just names.
@@ -105,6 +108,7 @@ def setup_iceberg_table():
     assert full_identifier not in catalog.list_tables(namespace)
 
 
+@pytest.mark.integration
 def test_schema_diff_against_catalog(setup_iceberg_table):
     """
     Integration test to verify that SchemaDiff correctly detects added fields
@@ -136,6 +140,7 @@ def test_schema_diff_against_catalog(setup_iceberg_table):
     assert diff.added[1].new_type == StringType()
 
 
+@pytest.mark.integration
 def test_schema_diff_detects_nested_additions(setup_iceberg_table):
     """
     Integration test to verify that SchemaDiff correctly detects additions in nested structures.
@@ -153,6 +158,7 @@ def test_schema_diff_detects_nested_additions(setup_iceberg_table):
     assert all(field.current_type is None for field in nested_adds)
 
 
+@pytest.mark.integration
 def test_schema_diff_detects_renames_by_id(setup_iceberg_table):
     """
     Integration test to verify that SchemaDiff detects field renames
@@ -175,6 +181,7 @@ def test_schema_diff_detects_renames_by_id(setup_iceberg_table):
     assert any(op.change == "renamed" for op in diff.changed)
 
 
+@pytest.mark.integration
 def test_schema_diff_all_operation_types(setup_iceberg_table):
     """
     Integration test to verify that SchemaDiff can detect all supported operations:
@@ -209,6 +216,7 @@ def test_schema_diff_all_operation_types(setup_iceberg_table):
     assert any(isinstance(op, MoveColumn) and op.name == "username" for op in ops)
 
 
+@pytest.mark.integration
 def test_schema_diff_no_op(setup_iceberg_table):
     """
     Integration test to verify that SchemaDiff detects no changes when the schemas are identical.
@@ -226,6 +234,8 @@ def test_schema_diff_no_op(setup_iceberg_table):
     assert len(diff.removed) == 0
     assert len(diff.changed) == 0
 
+
+@pytest.mark.integration
 @pytest.mark.parametrize("bad_schema", [
     {
         # unknown type
@@ -279,6 +289,7 @@ def test_malformed_schemas_fail(tmp_path, bad_schema):
     assert not file_path.exists(), "Temporary file should be deleted after test."
 
 
+@pytest.mark.integration
 def test_schema_diff_union_behavior():
     """
     Test that SchemaDiff handles union-like changes correctly, such as added fields
@@ -294,6 +305,7 @@ def test_schema_diff_union_behavior():
     assert "new_address" in [f.name for f in diff.added]
 
 
+@pytest.mark.integration
 def test_schema_diff_rename_and_type_change():
     """
     Test that SchemaDiff correctly handles a rename AND type change on the same field ID.
@@ -312,6 +324,8 @@ def test_schema_diff_rename_and_type_change():
     assert any(isinstance(op, RenameColumn) and op.name == "signup" and op.target == "signup_ts" for op in ops)
     assert any(isinstance(op, UpdateColumn) and op.name == "signup_ts" for op in ops)
 
+
+@pytest.mark.integration
 def test_schema_diff_display_output():
     """
     Test that the .display() output is formatted correctly using Rich.
@@ -330,6 +344,7 @@ def test_schema_diff_display_output():
     assert "+ is_active:" in output
 
 
+@pytest.mark.integration
 def test_apply_evolution_ops_round_trip(setup_iceberg_table):
     """
     1. Load the “current” and “new” schemas from your JSON files.

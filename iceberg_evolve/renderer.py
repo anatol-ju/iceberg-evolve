@@ -4,7 +4,7 @@ from rich.text import Text
 from rich.tree import Tree
 
 from iceberg_evolve.diff import FieldChange, SchemaDiff
-from iceberg_evolve.evolution_operation import UpdateColumn
+from iceberg_evolve.migrate import UpdateColumn
 from iceberg_evolve.utils import clean_type_str
 
 

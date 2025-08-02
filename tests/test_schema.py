@@ -1,7 +1,11 @@
 import pytest
 
-from iceberg_evolve.schema import Schema
+from iceberg_evolve.migrate import AddColumn, MoveColumn, RenameColumn, UnionSchema
+from iceberg_evolve.schema import Schema as EvolveSchema
 from iceberg_evolve.utils import IcebergSchemaSerializer
+import iceberg_evolve.schema as sc_module
+from pyiceberg.schema import Schema as IcebergSchema
+from pyiceberg.types import NestedField, StringType
 
 
 def test_repr_returns_string():
@@ -11,7 +15,7 @@ def test_repr_returns_string():
         "fields": [{"id": 1, "name": "id", "type": "int", "required": True}]
     }
     iceberg_schema = IcebergSchemaSerializer.from_dict(schema_dict)
-    schema = Schema(iceberg_schema)
+    schema = EvolveSchema(iceberg_schema)
     assert isinstance(repr(schema), str)
 
 
@@ -19,14 +23,14 @@ def test_from_file_reads_schema(tmp_path):
     """Test loading a schema from a local JSON file."""
     path = tmp_path / "schema.json"
     path.write_text('{"schema-id": 0, "fields": [{"id": 1, "name": "id", "type": "int", "required": true}]}')
-    schema = Schema.from_file(str(path))
+    schema = EvolveSchema.from_file(str(path))
     assert [f.name for f in schema.fields] == ["id"]
 
 
 def test_from_file_invalid_extension():
     """Test that loading a schema from a file with an invalid extension raises a ValueError."""
     with pytest.raises(ValueError, match="Currently, only JSON files are supported for schema loading."):
-        Schema.from_file("schema.txt")
+        EvolveSchema.from_file("schema.txt")
 
 
 def test_from_file_invalid_json(tmp_path):
@@ -35,7 +39,7 @@ def test_from_file_invalid_json(tmp_path):
     path.write_text('{"schema-id": 0, "fields": [')  # Incomplete JSON
     from iceberg_evolve.exceptions import SchemaParseError
     with pytest.raises(SchemaParseError, match="Failed to parse schema from"):
-        Schema.from_file(str(path))
+        EvolveSchema.from_file(str(path))
 
 
 def test_from_s3_reads_schema(monkeypatch):
@@ -56,7 +60,7 @@ def test_from_s3_reads_schema(monkeypatch):
     mock_boto3 = type("boto3", (), {"resource": lambda x: MockS3Resource()})
     monkeypatch.setitem(sys.modules, "boto3", mock_boto3)
 
-    schema = Schema.from_s3("bucket", "schema.json")
+    schema = EvolveSchema.from_s3("bucket", "schema.json")
     assert [f.name for f in schema.fields] == ["id"]
 
 
@@ -76,20 +80,17 @@ def test_from_s3_raises_schema_parse_error(monkeypatch):
 
     from iceberg_evolve.exceptions import SchemaParseError
     with pytest.raises(SchemaParseError, match="Failed to load schema from S3 s3://bucket/key.json: Simulated S3 failure"):
-        Schema.from_s3("bucket", "key.json")
+        EvolveSchema.from_s3("bucket", "key.json")
 
 
 def test_from_s3_invalid_extension():
     """Test that loading a schema from S3 with an invalid file extension raises a ValueError."""
     with pytest.raises(ValueError, match="Currently, only JSON files are supported for schema loading from S3."):
-        Schema.from_s3("bucket", "schema.txt")
+        EvolveSchema.from_s3("bucket", "schema.txt")
 
 
 def test_from_iceberg_uses_loader(monkeypatch):
     """Test loading a schema from an Iceberg table using a mocked catalog loader."""
-    from pyiceberg.schema import Schema as IcebergSchema
-    from pyiceberg.types import NestedField, StringType
-
     mock_schema = IcebergSchema(
         NestedField(field_id=1, name="id", field_type=StringType(), required=True)
     )
@@ -104,7 +105,7 @@ def test_from_iceberg_uses_loader(monkeypatch):
     import iceberg_evolve.schema
     monkeypatch.setattr(iceberg_evolve.schema, "load_catalog", lambda name, **kwargs: MockCatalog())
 
-    schema = Schema.from_iceberg("table", "glue")
+    schema = EvolveSchema.from_iceberg("table", "glue")
     assert [f.name for f in schema.fields] == ["id"]
 
 
@@ -119,31 +120,18 @@ def test_from_iceberg_raises_catalog_error(monkeypatch):
 
     from iceberg_evolve.exceptions import CatalogLoadError
     with pytest.raises(CatalogLoadError, match="Failed to load table 'table' from catalog 'glue': Simulated failure"):
-        Schema.from_iceberg("table", "glue")
+        EvolveSchema.from_iceberg("table", "glue")
+
 
 def test_schema_property_returns_iceberg_schema():
     """Test that the 'schema' property returns the underlying Iceberg schema."""
-    from pyiceberg.schema import Schema as IcebergSchema
-    from pyiceberg.types import NestedField, StringType
-
     iceberg_schema = IcebergSchema(
         NestedField(field_id=1, name="id", field_type=StringType(), required=True)
     )
-    schema = Schema(iceberg_schema)
+    schema = EvolveSchema(iceberg_schema)
     assert schema.schema == iceberg_schema
 
 
-# --- Additional evolve() tests ---
-import pytest
-from pyiceberg.schema import Schema as IcebergSchema
-from pyiceberg.types import NestedField, StringType
-from iceberg_evolve.schema import Schema as EvolveSchema
-import iceberg_evolve.schema as sc_module
-from iceberg_evolve.exceptions import CatalogLoadError, SchemaParseError
-from iceberg_evolve.diff import SchemaDiff
-from iceberg_evolve.evolution_operation import UnionSchema, AddColumn
-
-# --- Helper dummy table class to satisfy isinstance check and context manager ---
 class DummyTable:
     def __init__(self):
         self.catalog = self
@@ -169,6 +157,7 @@ class DummyTable:
                 return False
         return Ctx()
 
+
 def test_evolve_invalid_new_arg():
     """Evolve should reject a non-Schema 'new' argument."""
     original = EvolveSchema(IcebergSchema(NestedField(1, "id", StringType(), required=True)))
@@ -176,6 +165,7 @@ def test_evolve_invalid_new_arg():
     sc_module.Table = DummyTable
     with pytest.raises(ValueError, match="must be an instance of Schema"):
         original.evolve(new="not_a_schema", table=DummyTable())
+
 
 def test_evolve_invalid_table_arg():
     """Evolve should reject a non-Table 'table' argument."""
@@ -185,6 +175,7 @@ def test_evolve_invalid_table_arg():
     sc_module.Table = DummyTable
     with pytest.raises(ValueError, match="must be an instance of pyiceberg.table.Table"):
         original.evolve(new=original, table=object())
+
 
 def test_evolve_not_supported_union(monkeypatch):
     """Evolve should reject UnionSchema operations."""
@@ -201,6 +192,7 @@ def test_evolve_not_supported_union(monkeypatch):
     )
     with pytest.raises(NotImplementedError):
         original.evolve(new=original, table=DummyTable())
+
 
 def test_evolve_dry_run_no_apply(monkeypatch):
     """Dry run should not invoke update_schema and return original schema."""
@@ -220,6 +212,7 @@ def test_evolve_dry_run_no_apply(monkeypatch):
     result = original.evolve(new=original, table=DummyTable(), dry_run=True)
     assert result is original
 
+
 def test_evolve_breaking_not_allowed(monkeypatch):
     """Evolve should raise on breaking operations when not allowed."""
     original = EvolveSchema(IcebergSchema(NestedField(1, "id", StringType(), required=True)))
@@ -238,6 +231,7 @@ def test_evolve_breaking_not_allowed(monkeypatch):
     )
     with pytest.raises(ValueError, match="Breaking changes are not allowed"):
         original.evolve(new=original, table=DummyTable())
+
 
 def test_evolve_apply_ops(monkeypatch):
     """Evolve should apply non-breaking and breaking ops when allowed."""
@@ -285,6 +279,7 @@ def test_evolve_apply_ops(monkeypatch):
     original.evolve(new=original, table=instance_table, allow_breaking=True)
     assert applied == ["a", "b"]
 
+
 def test_evolve_return_applied_schema(monkeypatch):
     """Evolve should return the applied schema when requested."""
     # Original and new schemas
@@ -322,16 +317,11 @@ def test_evolve_phases_display_and_apply(monkeypatch):
       - Print each phase header and call op.display when quiet=False.
       - Invoke op.apply(update) under each open_update_context.
     """
-    from pyiceberg.schema import Schema as IcebergSDKSchema
-    from pyiceberg.types import NestedField, StringType
-    from iceberg_evolve.schema import Schema as EvolveSchema, open_update_context
-    import iceberg_evolve.schema as sc_mod
-    from iceberg_evolve.evolution_operation import RenameColumn, AddColumn, MoveColumn
 
     # 1) Prepare original and new (they're the same, since diff is stubbed)
-    sdk = IcebergSDKSchema(NestedField(1, "id", StringType(), required=True))
+    sdk = IcebergSchema(NestedField(1, "id", StringType(), required=True))
     original = EvolveSchema(sdk)
-    sc_mod.Table = None  # make sure isinstance(table, Table) passes; we'll override below
+    sc_module.Table = None  # make sure isinstance(table, Table) passes; we'll override below
 
     # 2) Build dummy ops: one rename, one add, one move
     rename_op = RenameColumn(name="old_name", target="new_name")
@@ -346,7 +336,7 @@ def test_evolve_phases_display_and_apply(monkeypatch):
             pass  # we won't test the diff.display itself here
 
     monkeypatch.setattr(
-        sc_mod.SchemaDiff,
+        sc_module.SchemaDiff,
         "from_schemas",
         classmethod(lambda cls, old, new: DummyDiff())
     )
@@ -381,7 +371,7 @@ def test_evolve_phases_display_and_apply(monkeypatch):
                     return False
             return Ctx()
 
-    sc_mod.Table = CaptureTable
+    sc_module.Table = CaptureTable
     table = CaptureTable()
 
     # 5) Call evolve with quiet=False (default)

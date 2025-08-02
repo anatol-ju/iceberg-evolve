@@ -3,7 +3,7 @@ from dataclasses import dataclass, fields
 from pyiceberg.types import IcebergType, NestedField, StructType
 from rich.console import Console
 
-from iceberg_evolve.evolution_operation import (
+from iceberg_evolve.migrate import (
     AddColumn,
     BaseEvolutionOperation,
     DropColumn,

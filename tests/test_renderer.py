@@ -1,9 +1,10 @@
 import pytest
-from pyiceberg.types import IntegerType, ListType, NestedField, StringType, StructType
 from rich.tree import Tree
 
 from iceberg_evolve.diff import FieldChange, SchemaDiff
+from iceberg_evolve.migrate import AddColumn, DropColumn, UnionSchema, UpdateColumn
 from iceberg_evolve.renderer import SchemaDiffRenderer
+from pyiceberg.types import IntegerType, ListType, NestedField, StringType, StructType
 
 
 def test_walk_and_color_struct_highlighting():
@@ -52,12 +53,6 @@ def test_walk_and_color_list_primitive_inline():
 
 def test_walk_and_color_struct_recursion():
     """Test _walk_and_color recurses into nested StructType fields correctly."""
-    from pyiceberg.types import NestedField, StringType, StructType
-    from rich.tree import Tree
-
-    from iceberg_evolve.diff import SchemaDiff
-    from iceberg_evolve.renderer import SchemaDiffRenderer
-
     # Define a nested struct: parent -> child
     nested = StructType(
         NestedField(field_id=2, name="child", field_type=StringType(), required=False)
@@ -82,12 +77,6 @@ def test_walk_and_color_struct_recursion():
 
 def test_walk_and_color_list_of_struct_branch():
     """Test _walk_and_color handles a ListType whose element_type is StructType."""
-    from pyiceberg.types import ListType, NestedField, StringType, StructType
-    from rich.tree import Tree
-
-    from iceberg_evolve.diff import SchemaDiff
-    from iceberg_evolve.renderer import SchemaDiffRenderer
-
     # Define struct element
     element_struct = StructType(
         NestedField(field_id=2, name="sub", field_type=StringType(), required=False)
@@ -118,12 +107,6 @@ def test_walk_and_color_list_of_struct_branch():
 
 def test_walk_and_color_list_of_primitives_branch():
     """Test _walk_and_color handles a ListType of primitive element types inline."""
-    from pyiceberg.types import IntegerType, ListType, NestedField, StructType
-    from rich.tree import Tree
-
-    from iceberg_evolve.diff import SchemaDiff
-    from iceberg_evolve.renderer import SchemaDiffRenderer
-
     # Use a list of integers inside a struct to hit primitive-list branch
     struct = StructType(
         NestedField(
@@ -144,12 +127,6 @@ def test_walk_and_color_list_of_primitives_branch():
 
 def test_walk_and_color_primitive_branch():
     """Test _walk_and_color handles primitive fields directly."""
-    from pyiceberg.types import NestedField, StringType, StructType
-    from rich.tree import Tree
-
-    from iceberg_evolve.diff import SchemaDiff
-    from iceberg_evolve.renderer import SchemaDiffRenderer
-
     struct = StructType(
         NestedField(field_id=1, name="p", field_type=StringType(), required=False)
     )
@@ -266,7 +243,6 @@ def test_render_change_moved_branch(renderer):
     assert any("moved after:" in lbl and "another" in lbl for lbl in child_labels)
 
 
-# New test for doc_changed branch
 def test_render_change_doc_changed_branch(renderer):
     """Test the 'doc_changed' branch of _render_change."""
     change = FieldChange(
@@ -285,8 +261,6 @@ def test_schema_diff_renderer_display_all_sections():
     from rich.text import Text
     from rich.tree import Tree
 
-    from iceberg_evolve.diff import FieldChange, SchemaDiff
-    from iceberg_evolve.renderer import SchemaDiffRenderer
     # Prepare a diff with one change in each section
     added = [FieldChange(name="new", change="added", new_type=StringType())]
     removed = [FieldChange(name="old", change="removed")]
@@ -328,9 +302,6 @@ def test_display_skips_empty_sections():
     """Test SchemaDiffRenderer.display skips sections with no changes."""
     from rich.console import Group
 
-    from iceberg_evolve.diff import SchemaDiff
-    from iceberg_evolve.renderer import SchemaDiffRenderer
-
     # Only 'removed' section has a change
     diff = SchemaDiff(
         added=[],
@@ -353,11 +324,7 @@ def test_display_skips_empty_sections():
 
 def test_evolution_operations_renderer_filters_nested_and_inserts_blank_lines():
     """Test that EvolutionOperationsRenderer filters nested ops and inserts blank lines between different op types."""
-    from pyiceberg.types import StringType
-
-    from iceberg_evolve.evolution_operation import AddColumn, DropColumn
     from iceberg_evolve.renderer import EvolutionOperationsRenderer
-
     printed = []
     class DummyConsole:
         def print(self, obj=None):
@@ -391,10 +358,6 @@ def test_evolution_operations_renderer_filters_nested_and_inserts_blank_lines():
 
 def test_evolution_operations_renderer_displays_updatecolumn_and_nested_diff(monkeypatch):
     """Test that EvolutionOperationsRenderer.display prints UpdateColumn and then nested SchemaDiff."""
-    from pyiceberg.types import IntegerType, StringType
-
-    from iceberg_evolve.diff import FieldChange
-    from iceberg_evolve.evolution_operation import UpdateColumn
     from iceberg_evolve.renderer import EvolutionOperationsRenderer
 
     printed = []
@@ -426,9 +389,6 @@ def test_evolution_operations_renderer_displays_updatecolumn_and_nested_diff(mon
 def test_evolution_operations_renderer_warns_on_unsupported():
     """Test EvolutionOperationsRenderer.display emits warning messages for unsupported ops."""
     from iceberg_evolve.renderer import EvolutionOperationsRenderer
-    from iceberg_evolve.evolution_operation import UnionSchema
-    from pyiceberg.types import StructType
-    from rich.tree import Tree
 
     printed = []
     class DummyConsole:

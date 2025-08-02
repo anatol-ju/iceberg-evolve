@@ -3,10 +3,24 @@ import re
 from pyiceberg.schema import Schema as IcebergSchema
 from pyiceberg.table import Table
 from pyiceberg.table.update.schema import UpdateSchema
-from pyiceberg.types import (BinaryType, BooleanType, DateType, DecimalType,
-                             DoubleType, FloatType, IcebergType, IntegerType,
-                             ListType, LongType, MapType, NestedField,
-                             StringType, StructType, TimestampType, TimeType)
+from pyiceberg.types import (
+    BinaryType,
+    BooleanType,
+    DateType,
+    DecimalType,
+    DoubleType,
+    FloatType,
+    IcebergType,
+    IntegerType,
+    ListType,
+    LongType,
+    MapType,
+    NestedField,
+    StringType,
+    StructType,
+    TimestampType,
+    TimeType
+)
 from rich.tree import Tree
 
 # consolidated mapping for primitive types used in both SQL and JSON parsing

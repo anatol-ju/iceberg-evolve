@@ -41,11 +41,15 @@ dev = [
 addopts = "--cov --cov-report term-missing"
 # Ignore this because it contains a conftest.py file
 norecursedirs = ["pg-data"]
+markers = [
+    "integration: mark a test as an integration test."
+]
 
 [tool.coverage.run]
 omit = [
     "tests/*",
     "examples/*",
+    "conftest.py",
     "*__init__.py"
 ]
 
