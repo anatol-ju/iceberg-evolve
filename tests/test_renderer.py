@@ -421,3 +421,36 @@ def test_evolution_operations_renderer_displays_updatecolumn_and_nested_diff(mon
 
     # Second printed object is the nested diff Group
     assert any(isinstance(obj, Group) for obj in printed[1:])
+
+
+def test_evolution_operations_renderer_warns_on_unsupported():
+    """Test EvolutionOperationsRenderer.display emits warning messages for unsupported ops."""
+    from iceberg_evolve.renderer import EvolutionOperationsRenderer
+    from iceberg_evolve.evolution_operation import UnionSchema
+    from pyiceberg.types import StructType
+    from rich.tree import Tree
+
+    printed = []
+    class DummyConsole:
+        def print(self, obj=None):
+            printed.append(obj)
+
+    # UnionSchema is always unsupported (is_supported=False)
+    op = UnionSchema(name="u", new_type=StructType())
+    renderer = EvolutionOperationsRenderer([op], console=DummyConsole())
+    renderer.display()
+
+    # 1) First printed item is the operation’s Tree
+    assert isinstance(printed[0], Tree)
+
+    # 2) Next two prints are our warnings
+    #    a) The ⚠️ “Warning:” line
+    #    b) The “Consider adding...” suggestion line
+    assert len(printed) >= 3
+    warning_line    = printed[1]
+    suggestion_line = printed[2]
+
+    assert isinstance(warning_line, str)
+    assert "⚠️" in warning_line and "Warning:" in warning_line
+    assert isinstance(suggestion_line, str)
+    assert "migrating data manually" in suggestion_line

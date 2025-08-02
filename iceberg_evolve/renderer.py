@@ -164,7 +164,7 @@ class EvolutionOperationsRenderer:
 
         if has_unsupported:
             self.console.print(
-                "\n[bold yellow]⚠️[/bold yellow] [bold yellow]Warning:[/bold yellow] Some operations are not supported (yet) and will be skipped."
+                "\n[bold yellow]⚠️  Warning:[/bold yellow] Some operations are not supported (yet) and will be skipped."
             )
             self.console.print(
                 "Consider adding new columns with the desired structure and migrating data manually.\n"

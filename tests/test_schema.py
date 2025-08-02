@@ -314,3 +314,103 @@ def test_evolve_return_applied_schema(monkeypatch):
     result = orig_schema.evolve(new=orig_schema, table=fetch_table, return_applied_schema=True)
     assert isinstance(result, EvolveSchema)
     assert result.schema == new_iceberg
+
+
+def test_evolve_phases_display_and_apply(monkeypatch):
+    """
+    Evolve should:
+      - Print each phase header and call op.display when quiet=False.
+      - Invoke op.apply(update) under each open_update_context.
+    """
+    from pyiceberg.schema import Schema as IcebergSDKSchema
+    from pyiceberg.types import NestedField, StringType
+    from iceberg_evolve.schema import Schema as EvolveSchema, open_update_context
+    import iceberg_evolve.schema as sc_mod
+    from iceberg_evolve.evolution_operation import RenameColumn, AddColumn, MoveColumn
+
+    # 1) Prepare original and new (they're the same, since diff is stubbed)
+    sdk = IcebergSDKSchema(NestedField(1, "id", StringType(), required=True))
+    original = EvolveSchema(sdk)
+    sc_mod.Table = None  # make sure isinstance(table, Table) passes; we'll override below
+
+    # 2) Build dummy ops: one rename, one add, one move
+    rename_op = RenameColumn(name="old_name", target="new_name")
+    add_op    = AddColumn(name="foo", new_type=StringType())
+    move_op   = MoveColumn(name="bar", target="", position="first")
+
+    # Stub out SchemaDiff.from_schemas -> dummy diff
+    class DummyDiff:
+        def to_evolution_operations(self):
+            return [rename_op, add_op, move_op]
+        def display(self, console):
+            pass  # we won't test the diff.display itself here
+
+    monkeypatch.setattr(
+        sc_mod.SchemaDiff,
+        "from_schemas",
+        classmethod(lambda cls, old, new: DummyDiff())
+    )
+
+    # 3) Prepare a dummy console to capture prints
+    printed = []
+    class DummyConsole:
+        def print(self, msg=None):
+            printed.append(msg)
+
+    # 4) CaptureTable: instrument rename_column, add_column, move_first
+    applied = []
+    class CaptureTable:
+        # mimic pyiceberg.table.Table
+        def __init__(self):
+            self.catalog = self
+        def name(self): return "dummy"
+        def load_table(self, _): return self
+
+        def update_schema(self):
+            class Ctx:
+                def __enter__(inner):
+                    class Update:
+                        def rename_column(self, name, target):
+                            applied.append(f"rename:{name}->{target}")
+                        def add_column(self, name, new_type, doc=None):
+                            applied.append(f"add:{name}")
+                        def move_first(self, name):
+                            applied.append(f"move_first:{name}")
+                    return Update()
+                def __exit__(inner, exc_type, exc, tb):
+                    return False
+            return Ctx()
+
+    sc_mod.Table = CaptureTable
+    table = CaptureTable()
+
+    # 5) Call evolve with quiet=False (default)
+    result = original.evolve(
+        new=original,
+        table=table,
+        allow_breaking=True,
+        quiet=False,
+        console=DummyConsole()
+    )
+    # Evolve returns self when return_applied_schema=False
+    assert result is original
+
+    # 6) Assertions:
+
+    # a) Phase headers printed in order:
+    #    - "[bold]Applying Renames...[/bold]"
+    #    - "[bold]Applying Adds, Updates, and Drops...[/bold]"
+    #    - "[bold]Applying Moves...[/bold]"
+    bodies = [str(x) for x in printed if isinstance(x, str)]
+    assert any("Applying Renames" in b for b in bodies),    "should print rename header"
+    assert any("Applying Adds, Updates" in b for b in bodies), "should print add/update header"
+    assert any("Applying Moves" in b for b in bodies),     "should print move header"
+
+    # b) Each op.display(console) was invoked once:
+    #    (RenameColumn.pretty / AddColumn.pretty / MoveColumn.pretty each call console.print internally,
+    #     but we're mostly checking that display() was called at all by virtue of no errors)
+
+    # c) Each apply method mapped to the correct Update method call
+    assert "rename:old_name->new_name" in applied
+    assert "add:foo" in applied
+    assert "move_first:bar" in applied

@@ -14,6 +14,7 @@ from iceberg_evolve.evolution_operation import (
     UnionSchema,
     UpdateColumn
 )
+from iceberg_evolve.exceptions import UnsupportedSchemaEvolutionWarning
 
 
 @pytest.fixture
@@ -357,3 +358,101 @@ def test_union_schema_pretty_with_color():
     tree = op.pretty(use_color=True)
     assert isinstance(tree, Tree)
     assert "merged" in tree.children[0].label
+
+
+def test_add_column_pretty_unsupported():
+    from iceberg_evolve.evolution_operation import AddColumn
+    from pyiceberg.types import StringType
+    op = AddColumn("foo", StringType())
+    op.is_supported = False
+    tree = op.pretty(use_color=False)
+    assert "⚠️" in tree.label      # covers line 73
+
+
+def test_add_column_apply_unsupported(mock_update_schema):
+    from iceberg_evolve.evolution_operation import AddColumn
+    from pyiceberg.types import StringType
+    op = AddColumn("foo", StringType())
+    op.is_supported = False
+    with pytest.warns(UnsupportedSchemaEvolutionWarning):
+        op.apply(mock_update_schema)  # covers lines 86–90
+    mock_update_schema.add_column.assert_not_called()
+
+
+def test_drop_column_pretty_unsupported():
+    from iceberg_evolve.evolution_operation import DropColumn
+    op = DropColumn("bar")
+    op.is_supported = False
+    tree = op.pretty(use_color=True)
+    assert "⚠️" in tree.label    # covers line 120
+
+
+def test_drop_column_apply_unsupported(mock_update_schema):
+    from iceberg_evolve.evolution_operation import DropColumn
+    op = DropColumn("bar")
+    op.is_supported = False
+    with pytest.warns(UnsupportedSchemaEvolutionWarning):
+        op.apply(mock_update_schema)  # covers lines 133–137
+    mock_update_schema.delete_column.assert_not_called()
+
+
+def test_update_column_pretty_unsupported():
+    from iceberg_evolve.evolution_operation import UpdateColumn
+    from pyiceberg.types import StringType, StructType
+    op = UpdateColumn("baz", current_type=StringType(), new_type=StructType())
+    # __post_init__ sets is_supported=False for non-primitive new_type
+    tree = op.pretty(use_color=False)
+    assert "⚠️" in tree.label    # covers the Unsupported suffix in pretty()
+
+
+def test_update_column_apply_unsupported(mock_update_schema):
+    from iceberg_evolve.evolution_operation import UpdateColumn
+    from pyiceberg.types import StringType, StructType
+    op = UpdateColumn("baz", current_type=StringType(), new_type=StructType())
+    with pytest.warns(UnsupportedSchemaEvolutionWarning):
+        op.apply(mock_update_schema)  # covers lines 216–224
+    mock_update_schema.update_column.assert_not_called()
+
+
+def test_rename_column_pretty_unsupported():
+    from iceberg_evolve.evolution_operation import RenameColumn
+    op = RenameColumn("old", target="new")
+    op.is_supported = False
+    tree = op.pretty(use_color=True)
+    assert "⚠️" in tree.label    # covers line 267
+
+
+def test_rename_column_apply_unsupported(mock_update_schema):
+    from iceberg_evolve.evolution_operation import RenameColumn
+    op = RenameColumn("old", target="new")
+    op.is_supported = False
+    with pytest.warns(UnsupportedSchemaEvolutionWarning):
+        op.apply(mock_update_schema)  # covers lines 281–285
+    mock_update_schema.rename_column.assert_not_called()
+
+
+def test_move_column_pretty_unsupported():
+    from iceberg_evolve.evolution_operation import MoveColumn
+    op = MoveColumn("m", target="t", position="first")
+    op.is_supported = False
+    tree = op.pretty(use_color=False)
+    assert "⚠️" in tree.label    # covers line 322
+
+
+def test_move_column_apply_unsupported(mock_update_schema):
+    from iceberg_evolve.evolution_operation import MoveColumn
+    op = MoveColumn("m", target="t", position="after")
+    op.is_supported = False
+    with pytest.warns(UnsupportedSchemaEvolutionWarning):
+        op.apply(mock_update_schema)  # covers lines 337–341
+    mock_update_schema.move_after.assert_not_called()
+
+
+def test_union_schema_apply_supported(mock_update_schema):
+    from iceberg_evolve.evolution_operation import UnionSchema
+    from pyiceberg.types import StructType
+    op = UnionSchema("union_me", new_type=StructType())
+    # override to True so we hit the final line 405
+    op.is_supported = True
+    op.apply(mock_update_schema)
+    mock_update_schema.union_by_name.assert_called_once_with(op.new_type)

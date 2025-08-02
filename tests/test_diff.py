@@ -1,7 +1,7 @@
 import sys
 
 import pytest
-from pyiceberg.types import IntegerType, NestedField, StringType, StructType
+from pyiceberg.types import IntegerType, ListType, NestedField, StringType, StructType
 
 from iceberg_evolve.diff import SchemaDiff
 from iceberg_evolve.schema import Schema
@@ -327,3 +327,86 @@ def test_swap_two_fields_reports_both_moved():
     diff = SchemaDiff.from_schemas(current, new)
     moved = [fc.name for fc in diff.changed if fc.change == "moved"]
     assert set(moved) == {"y"}
+
+
+def test_union_by_name_identical_schemas_no_diff():
+    """Union by name on identical schemas yields no added/changed/removed."""
+    # Same name and type, different IDs → no diff
+    f1 = NestedField(1, "a", StringType(), required=True)
+    f2 = NestedField(2, "a", StringType(), required=True)
+    cur = make_schema([f1])
+    new = make_schema([f2])
+    diff = SchemaDiff.union_by_name(cur, new)
+    assert diff.added == []
+    assert diff.removed == []
+    assert diff.changed == []
+
+
+def test_union_by_name_detects_added_field():
+    """Fields present only in the new schema show up as 'added'."""
+    cur = make_schema([NestedField(1, "a", StringType(), required=True)])
+    new = make_schema([
+        NestedField(1, "a", StringType(), required=True),
+        NestedField(2, "b", IntegerType(), required=False)
+    ])
+    diff = SchemaDiff.union_by_name(cur, new)
+    assert len(diff.added) == 1
+    added = diff.added[0]
+    assert added.name == "b"
+    assert isinstance(added.new_type, IntegerType)
+    assert diff.removed == []
+    assert diff.changed == []
+
+
+def test_union_by_name_detects_type_changed():
+    """Fields with same name but different types show up under 'changed'."""
+    cur = make_schema([NestedField(1, "a", StringType(), required=True)])
+    new = make_schema([NestedField(1, "a", IntegerType(), required=True)])
+    diff = SchemaDiff.union_by_name(cur, new)
+    assert diff.added == []
+    assert diff.removed == []
+    assert len(diff.changed) == 1
+    change = diff.changed[0]
+    assert change.name == "a"
+    assert isinstance(change.current_type, StringType)
+    assert isinstance(change.new_type, IntegerType)
+
+
+def test_union_by_name_never_reports_removed():
+    """Union by name should never report removed fields."""
+    cur = make_schema([
+        NestedField(1, "a", StringType(), required=True),
+        NestedField(2, "b", IntegerType(), required=False)
+    ])
+    new = make_schema([NestedField(1, "a", StringType(), required=True)])
+    diff = SchemaDiff.union_by_name(cur, new)
+    assert diff.added == []
+    assert diff.removed == []  # never removes
+    # and 'b' should not appear in changed either
+    assert all(c.name != "b" for c in diff.changed)
+
+
+def test_union_by_name_detects_list_type_change():
+    """Union by name should detect nested ListType element-type changes."""
+    cur = make_schema([
+        NestedField(
+            1,
+            "c",
+            ListType(element_id=3, element_type=IntegerType(), element_required=True),
+            required=False
+        )
+    ])
+    new = make_schema([
+        NestedField(
+            1,
+            "c",
+            ListType(element_id=3, element_type=StringType(), element_required=True),
+            required=False
+        )
+    ])
+    diff = SchemaDiff.union_by_name(cur, new)
+    assert len(diff.changed) == 1
+    change = diff.changed[0]
+    assert change.name == "c"
+    assert isinstance(change.current_type, ListType)
+    assert isinstance(change.new_type, ListType)
