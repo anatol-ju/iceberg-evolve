@@ -404,3 +404,171 @@ def test_evolve_phases_display_and_apply(monkeypatch):
     assert "rename:old_name->new_name" in applied
     assert "add:foo" in applied
     assert "move_first:bar" in applied
+
+
+def make_original():
+    # helper to create a base Schema instance
+    iceberg = IcebergSchema(NestedField(1, "id", StringType(), required=True))
+    return EvolveSchema(iceberg)
+
+def test_strict_default_fails_on_unsupported(monkeypatch):
+    """
+    When strict=True, any op with is_supported=False should cause evolve() to
+    print an error and raise RuntimeError.
+    """
+    original = make_original()
+    sc_module.Table = DummyTable
+
+    # Dummy op that's unsupported
+    class UnsupportedOp:
+        is_breaking = lambda self: False
+        is_supported = False
+        def pretty(self):
+            return "<UNSUPPORTED>"
+        def display(self, console):
+            console.print("displayed")
+        def apply(self, update):
+            pass
+
+    # Stub the diff to return our single unsupported op
+    class DummyDiff:
+        def to_evolution_operations(self):
+            return [UnsupportedOp()]
+        def display(self, console):
+            pass
+
+    monkeypatch.setattr(
+        sc_module.SchemaDiff,
+        "from_schemas",
+        classmethod(lambda cls, old, new: DummyDiff())
+    )
+
+    # Capture console output
+    printed = []
+    class DummyConsole:
+        def print(self, msg=None):
+            printed.append(msg)
+
+    with pytest.raises(RuntimeError, match="Aborting schema evolution"):
+        original.evolve(
+            new=original,
+            table=DummyTable(),
+            strict=True,       # exercise the failure path
+            quiet=True,        # skip diff/ops prints
+            console=DummyConsole()
+        )
+
+    # First print should be the Error header, second the op.pretty()
+    assert printed[0].startswith("[bold red]Error"), "Expected error header"
+    assert "<UNSUPPORTED>" in printed[1], "Expected pretty() output of unsupported op"
+
+def test_non_strict_allows_unsupported(monkeypatch):
+    """
+    When strict=False, unsupported ops should be skipped (no RuntimeError),
+    and evolve() should return normally.
+    """
+    original = make_original()
+    sc_module.Table = DummyTable
+
+    # Same dummy op as above
+    class UnsupportedOp:
+        is_breaking = lambda self: False
+        is_supported = False
+        def pretty(self): return "<UNSUPPORTED>"
+        def apply(self, update): pass
+
+    class DummyDiff:
+        def to_evolution_operations(self):
+            return [UnsupportedOp()]
+        def display(self, console):
+            pass
+
+    monkeypatch.setattr(
+        sc_module.SchemaDiff,
+        "from_schemas",
+        classmethod(lambda cls, old, new: DummyDiff())
+    )
+
+    # Use a dummy console to verify we still see the warning
+    printed = []
+    class DummyConsole:
+        def print(self, msg=None):
+            printed.append(msg)
+
+    result = original.evolve(
+        new=original,
+        table=DummyTable(),
+        strict=False,     # do not fail on unsupported
+        quiet=True,
+        console=DummyConsole()
+    )
+
+    # Should simply return self
+    assert result is original
+    # It should *not* print the Error header when strict=False
+    assert not any("Error:" in str(p) for p in printed), (
+        f"Did not expect an error header when strict=False, but got: {printed}"
+    )
+
+
+def test_strict_fails_on_any_unsupported(monkeypatch):
+    """
+    If strict=True, *any* op with is_supported=False should trigger the fail-fast block:
+    1) print the Error header,
+    2) print each op.pretty(),
+    3) raise RuntimeError.
+    """
+    from iceberg_evolve.schema import Schema as EvolveSchema
+    import iceberg_evolve.schema as sc_mod
+    from pyiceberg.schema import Schema as IcebergSchema
+    from pyiceberg.types import NestedField, StringType
+
+    # Build a dummy Schema and table
+    base = EvolveSchema(IcebergSchema(NestedField(1, "id", StringType(), required=True)))
+    class DummyTable:
+        def name(self): return "dummy"
+        def load_table(self, _): return self
+        def update_schema(self):
+            class Ctx:
+                def __enter__(self): return self
+                def __exit__(self, *_): return False
+            return Ctx()
+
+    # allow DummyTable to pass isinstance(table, Table)
+    monkeypatch.setattr(sc_mod, "Table", DummyTable)
+
+    # Monkey-patch SchemaDiff to yield one unsupported op
+    class Op:
+        is_supported = False
+        def pretty(self): return "UNSUPPORTED-OP"
+        def display(self, console): pass
+        def is_breaking(self): return False
+
+    class DummyDiff:
+        def to_evolution_operations(self): return [Op()]
+        def display(self, console): pass
+
+    monkeypatch.setattr(
+        sc_mod.SchemaDiff,
+        "from_schemas",
+        classmethod(lambda cls, old, new: DummyDiff())
+    )
+
+    # Capture console prints
+    printed = []
+    class C:
+        def print(self, msg=None):
+            printed.append(msg)
+
+    with pytest.raises(RuntimeError, match="one or more operations are not supported"):
+        base.evolve(
+            new=base,
+            table=DummyTable(),
+            strict=True,
+            quiet=True,
+            console=C()
+        )
+
+    # Validate output
+    assert any("Error:" in str(line) for line in printed), "Expected Error header"
+    assert any("UNSUPPORTED-OP" in str(line) for line in printed), "Expected op.pretty() output"

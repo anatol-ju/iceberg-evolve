@@ -12,7 +12,8 @@ dependencies = [
     "pyiceberg[hive,pyarrow] (>=0.9.1,<1.0.0)",
     "schemaworks (>=1.1.0,<2.0.0)",
     "boto3 (>=1.34.0,<2.0.0)",
-    "rich (>=10.11.0,<14.0.0)"
+    "rich (>=10.11.0,<14.0.0)",
+    "typer (>=0.16.0,<0.17.0)"
 ]
 keywords = ["iceberg", "schema", "evolution", "data-engineering"]
 classifiers = [
@@ -63,6 +64,7 @@ packages = [
 
 [project.scripts]
 example = "examples.evolve_test:main"
+iceberg-evolve = "iceberg_evolve.cli:app"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]

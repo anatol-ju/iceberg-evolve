@@ -154,6 +154,7 @@ class Schema:
         table: Table,
         dry_run: bool = False,
         quiet: bool = False,
+        strict: bool = True,
         allow_breaking: bool = False,
         return_applied_schema: bool = False,
         console: Console | None = None,
@@ -167,6 +168,7 @@ class Schema:
             table (Table): The Iceberg table to apply the evolution to.
             dry_run (bool): If True, display changes but do not apply them.
             quiet (bool): If True, suppress output to the console.
+            strict (bool): If True, the evolution will fail if any unsupported operations are detected.
             allow_breaking (bool): If True, force updates even if they are breaking changes,
                 e.g. dropping a column with data or updating a column with a narrower type.
             return_diff (bool): If True, return a tuple (evolved_schema, diff).
@@ -181,6 +183,8 @@ class Schema:
             raise ValueError("The 'new' parameter must be an instance of Schema.")
         if not isinstance(table, Table):
             raise ValueError("The 'table' parameter must be an instance of pyiceberg.table.Table.")
+
+        from iceberg_evolve.migrate import UpdateColumn
 
         console = console or Console()
 
@@ -207,7 +211,18 @@ class Schema:
         allowed_ops = [op for op in ops if not op.is_breaking() or allow_breaking]
         breaking_ops = [op for op in ops if op.is_breaking() and not allow_breaking]
 
-        # Filter breaking operations if not allowed
+        # 0) Fail on any evolution operation that isn't supported, unless strict is False
+        if strict:
+            unsupported_ops = [op for op in ops if not getattr(op, "is_supported", True)]
+            if unsupported_ops:
+                console.print("[bold red]Error:[/bold red] The following evolution operations are unsupported:")
+                for op in unsupported_ops:
+                    console.print(op.pretty())
+                raise RuntimeError(
+                    "Aborting schema evolution: one or more operations are not supported."
+                )
+
+        # 1) Filter breaking operations if not allowed
         if not allow_breaking and breaking_ops:
             console.print("[bold red]Breaking changes detected but 'allow_breaking' is False:[/bold red]")
             for op in breaking_ops:
