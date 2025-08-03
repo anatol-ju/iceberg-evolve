@@ -391,3 +391,33 @@ def test_union_by_name_detects_list_type_change():
     assert change.name == "c"
     assert isinstance(change.current_type, ListType)
     assert isinstance(change.new_type, ListType)
+
+
+def test_to_evolution_operations_union_by_name_warning(monkeypatch):
+    """
+    When union_by_name() is used, to_evolution_operations should emit a warning
+    and fall back to individual ADD/UPDATE ops rather than a UnionSchema op.
+    """
+    from rich.console import Console
+    from iceberg_evolve.migrate import AddColumn
+
+    # Capture any warning printed
+    warnings = []
+    monkeypatch.setattr(Console, "print", lambda self, msg, *args, **kwargs: warnings.append(msg))
+
+    # Build two schemas: 'a' exists in both, 'b' only in new
+    current = make_schema([NestedField(1, "a", StringType(), required=True)])
+    new = make_schema([
+        NestedField(1, "a", StringType(), required=True),
+        NestedField(2, "b", IntegerType(), required=False),
+    ])
+
+    diff = SchemaDiff.union_by_name(current, new)
+    ops = diff.to_evolution_operations()
+
+    # 1) warning was emitted
+    assert warnings, "Expected a warning when using union_by_name()"  # :contentReference[oaicite:1]{index=1}
+    assert "union_by_name()" in warnings[0]
+
+    # 2) still produces an AddColumn for 'b'
+    assert any(isinstance(op, AddColumn) and op.name == "b" for op in ops)

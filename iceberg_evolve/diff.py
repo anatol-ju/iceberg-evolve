@@ -262,7 +262,10 @@ class SchemaDiff:
                 ))
 
         # No removals for union!
-        return SchemaDiff(added=added, removed=[], changed=changed)
+        diff = SchemaDiff(added=added, removed=[], changed=changed)
+        # mark that this diff came via union_by_name
+        diff._union_by_name = True
+        return diff
 
     def to_evolution_operations(self) -> list[BaseEvolutionOperation]:
         """
@@ -276,6 +279,12 @@ class SchemaDiff:
         Returns:
             list[BaseEvolutionOperation]: A list of evolution operations to apply, sorted by priority.
         """
+        # If the user called union_by_name(), warn and fall back to individual adds/updates
+        if getattr(self, "_union_by_name", False):
+            Console().print(
+                "[bold yellow]Warning:[/bold yellow] union_by_name() does not emit a single UnionSchema evolution operation yet;"
+                " performing individual ADD/UPDATE operations instead."
+            )
         ops: list[BaseEvolutionOperation] = []
 
         # 1) Renames

@@ -33,7 +33,7 @@ services:
     volumes:
       - ./examples:/app/examples
       #- ./pyiceberg.yaml:/root/.pyiceberg/config.yaml:ro
-      - ./tests/integration.py:/app/tests/integration.py
+      - ./tests/test_integration.py:/app/tests/test_integration.py
     depends_on:
       - postgres
       - hive-metastore

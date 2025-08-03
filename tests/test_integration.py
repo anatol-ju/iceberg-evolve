@@ -4,6 +4,7 @@ import warnings
 
 import pytest
 from pyiceberg.catalog import load_catalog
+from pyiceberg.schema import Schema as IcebergSchema
 from pyiceberg.types import BooleanType, IntegerType, ListType, NestedField, StringType, TimestampType
 from rich.console import Console
 
@@ -31,7 +32,7 @@ def test_schema_diff_sanity_check():
     - One field renamed but same ID (should not count as added/removed)
     """
     # Base schema: has fields id and name
-    base = EvolveSchema(
+    base = IcebergSchema(
         NestedField(field_id=1, name="id", field_type=IntegerType(), required=True),
         NestedField(field_id=2, name="name", field_type=StringType(), required=True),
     )
@@ -39,7 +40,7 @@ def test_schema_diff_sanity_check():
     # New schema:
     # - field_id=2 renamed from 'name' to 'full_name'
     # - field_id=3 is a new field
-    new = EvolveSchema(
+    new = IcebergSchema(
         NestedField(field_id=1, name="id", field_type=IntegerType(), required=True),
         NestedField(field_id=2, name="full_name", field_type=StringType(), required=True),
         NestedField(field_id=3, name="age", field_type=IntegerType(), required=False),
@@ -206,7 +207,7 @@ def test_schema_diff_all_operation_types(setup_iceberg_table):
     assert any(op.name == "metadata.login_attempts" and isinstance(op.new_type, ListType) for op in diff.changed), "Expected 'metadata.login_attempts' to be updated to struct"
 
     # Validate EvolutionOperation output
-    from iceberg_evolve.evolution_operation import AddColumn, DropColumn, UpdateColumn, RenameColumn, MoveColumn
+    from iceberg_evolve.migrate import AddColumn, DropColumn, UpdateColumn, RenameColumn, MoveColumn
     ops = diff.to_evolution_operations()
 
     assert any(isinstance(op, AddColumn) and op.name == "is_active" for op in ops)
@@ -410,3 +411,32 @@ def test_apply_evolution_ops_round_trip(setup_iceberg_table):
     assert post.added   == []
     assert post.removed == []
     assert {fc.name for fc in post.changed} == {"metadata"}
+
+
+@pytest.mark.integration
+def test_union_schema_to_evolution_operation():
+    """
+    End-to-end test that a union-by-name diff produces a UnionSchema operation
+    when you call to_evolution_operations().
+    """
+    from iceberg_evolve.migrate import UnionSchema
+
+    old = EvolveSchema.from_file("examples/users_current.iceberg.json")
+    new = EvolveSchema.from_file("examples/users_union_candidate.iceberg.json")
+
+    # build the “union” diff
+    diff = SchemaDiff.union_by_name(old, new)
+    diff.display()  # sanity-check the diff
+
+    # convert to operations
+    ops = diff.to_evolution_operations()
+
+    # assert that a UnionSchema op is present
+    assert any(isinstance(op, UnionSchema) for op in ops), (
+        "Expected a UnionSchema operation in the evolution plan"
+    )
+
+    # optional: check that the UnionSchema contains the expected fields
+    union_op = next(op for op in ops if isinstance(op, UnionSchema))
+    names = {f.name for f in union_op.new_fields}
+    assert "new_address" in names and "alternate_email" in names
