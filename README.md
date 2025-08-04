@@ -1,2 +1,130 @@
 # iceberg-evolve
-Compare and evolve Iceberg table schemas
+Schema diffing and evolution tool for Apache Iceberg and beyond.
+
+## 📣 New in 0.1.0
+Initial release with core support for schema comparison and automated evolution against live Iceberg tables.
+
+## 🔧 Features
+- Schema Loading
+  - Store and load Iceberg schemas to/from standalone JSON files via IcebergSchemaJSONSerializer.
+  - Fetch table schemas directly from Iceberg catalogs (Hive, Glue, REST) via PyIceberg configurations (pyiceberg.yaml).
+
+- Schema Diffing
+  - Detect added, removed, renamed, and type-changed columns.
+  - Support matching by column id or name strategies (default: id).
+
+- Automated Evolution
+  - Generate and apply Iceberg schema evolution operations (add/rename/update/drop).
+  - Preview migrations with a `--dry-run` mode before applying changes.
+
+- Rich CLI
+  - `iceberg-evolve diff <old.json> <new.json>` to view schema diffs in a colored, tree-style format.
+  - `iceberg-evolve evolve --catalog-url <URI> --table-ident <db.table> --schema-path <new.json>` to apply migrations.
+
+- Python API
+  - Programmatic access to `Schema`, `SchemaDiff`, and migration utilities for integration in CI/CD pipelines or custom scripts.
+
+- Utilities
+  - Clean and normalize Iceberg type strings.
+  - Render operation plans to console via [Rich](https://pypi.org/project/rich/).
+
+## 🚀 Use Cases
+- Automate schema migrations for data lakes built on Iceberg.
+- Integrate schema checks into CI/CD workflows to prevent accidental breaking changes.
+- Generate human-readable schema evolution plans for review and auditing.
+- Build Python tooling around Iceberg schemas, including advanced analyses and reporting.
+
+## 🚚 Installation
+Requires Python 3.10 or later.
+```
+pip install iceberg-evolve
+```
+
+Or, to install for development with Poetry:
+```
+git clone https://github.com/anatol-ju/iceberg-evolve.git
+cd iceberg-evolve
+poetry install --with dev
+pre-commit install  # optional: enable linting and formatting hooks
+```
+
+## 🧱 Quick Examples
+### Python API
+```python
+from iceberg_evolve.schema import Schema
+from iceberg_evolve.diff import SchemaDiff
+from iceberg_evolve.renderer import SchemaDiffRenderer
+
+# Load schemas
+old = Schema.from_json_file("schemas/users_current.json")
+new = Schema.from_json_file("schemas/users_new.json")
+
+# Compute diff and render to console
+diff = SchemaDiff(old, new)
+SchemaDiffRenderer(diff).display()
+
+from iceberg_evolve.schema import Schema
+from iceberg_evolve.serializer import IcebergSchemaJSONSerializer
+
+# Load an Iceberg Schema from a local file (in the expected format)
+old_schema = Schema.from_json_file("schemas/users_current.json")
+
+# Write it out to a standalone JSON file...
+IcebergSchemaJSONSerializer.to_json_file(old_schema, "schemas/users_exported.json")
+
+# …and read it back in later
+reloaded_schema = IcebergSchemaJSONSerializer.from_json_file("schemas/users_exported.json")
+```
+
+### CLI
+```
+# View diff between two JSON schemas
+iceberg-evolve diff users_current.json users_new.json \
+  --match-by name
+
+# Apply evolution to a live Iceberg table (dry run)
+iceberg-evolve evolve \
+  --catalog-url hive://localhost:9083 \
+  --table-ident analytics.users \
+  --schema-path users_new.json \
+  --dry-run
+
+# Serialize a table's schema
+iceberg-evolve serialize \
+  --catalog-url hive://localhost:9083 \
+  --table-ident analytics.users \
+  --output-path schemas/users_table_schema.json
+```
+
+## ⚙️ Configuration
+Create a `pyiceberg.yaml` in your project root or `$HOME/.pyiceberg/pyiceberg.yaml` to configure catalogs:
+```yaml
+catalogs:
+  default:
+    type: hive
+    uri: thrift://localhost:9083
+
+  glue:
+    type: glue
+    region: eu-west-1
+```
+Pass the catalog name or full URI to the `evolve` command via `--catalog-url` (e.g., `glue://default`).
+
+Alternatively, set environment variables to control PyIceberg. See [documentation](https://py.iceberg.apache.org/configuration/).
+
+## 🧪 Testing
+Run unit tests with pytest:
+```
+poetry run pytest
+```
+Coverage reports are generated automatically via the existing configuration.
+
+## 📝 License
+This project is licensed under the MIT License. See the LICENSE file for details.
+
+## 🧑‍💻 Author
+Anatol Jurenkow
+Cloud Data Engineer | AWS Enthusiast | Iceberg Fan
+[GitHub](https://github.com/anatol-ju) · [LinkedIn](https://www.linkedin.com/in/anatol-jurenkow)
+
+Feel free to open issues or contribute via pull requests—happy evolving!
