@@ -1,6 +1,6 @@
 [project]
 name = "iceberg-evolve"
-version = "0.1.0"
+version = "1.0.0"
 description = "Schema diffing and evolution tool for Iceberg and beyond."
 authors = [
     {name = "Anatol Jurenkow", email = "azurius@t-online.de"}

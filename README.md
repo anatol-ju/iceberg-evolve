@@ -1,7 +1,7 @@
 # iceberg-evolve
 Schema diffing and evolution tool for Apache Iceberg and beyond.
 
-## 📣 New in 0.1.0
+## 📣 New in 1.0.0
 Initial release with core support for schema comparison and automated evolution against live Iceberg tables.
 
 ## 🔧 Features
