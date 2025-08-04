@@ -1,2 +1,2 @@
 from .schema import Schema as Schema
-from .utils import IcebergSchemaSerializer as IcebergSchemaSerializer
+from .serializer import IcebergSchemaJSONSerializer as IcebergSchemaJSONSerializer

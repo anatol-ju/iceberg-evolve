@@ -66,7 +66,8 @@ from iceberg_evolve.migrate import (
     UnionSchema
 )
 from iceberg_evolve.exceptions import CatalogLoadError, SchemaParseError
-from iceberg_evolve.utils import IcebergSchemaSerializer, open_update_context
+from iceberg_evolve.serializer import IcebergSchemaJSONSerializer
+from iceberg_evolve.utils import open_update_context
 
 
 class Schema:
@@ -103,7 +104,7 @@ class Schema:
         try:
             with open(path) as f:
                 data = json.load(f)
-            iceberg_schema = IcebergSchemaSerializer.from_dict(data)
+            iceberg_schema = IcebergSchemaJSONSerializer.from_dict(data)
             return cls(iceberg_schema)
         # This block handles JSON parsing failures, such as invalid syntax or schema structure.
         except Exception as e:
@@ -140,7 +141,7 @@ class Schema:
             s3 = boto3.resource("s3")
             obj = s3.Object(bucket, key)
             data = json.loads(obj.get()["Body"].read().decode("utf-8"))
-            iceberg_schema = IcebergSchemaSerializer.from_dict(data)
+            iceberg_schema = IcebergSchemaJSONSerializer.from_dict(data)
             return cls(iceberg_schema)
         except Exception as e:
             raise SchemaParseError(

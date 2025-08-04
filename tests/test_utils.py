@@ -1,5 +1,4 @@
 import pytest
-from pyiceberg.schema import Schema as IcebergSchema
 from pyiceberg.types import (
     BooleanType,
     DateType,
@@ -18,7 +17,6 @@ from pyiceberg.types import (
 from rich.tree import Tree
 
 from iceberg_evolve.utils import (
-    IcebergSchemaSerializer,
     IDAllocator,
     canonicalize_type,
     clean_type_str,
@@ -37,6 +35,7 @@ def test_split_top_level_simple():
     result = split_top_level(s, sep=",")
     assert result == ["a", "b", "c"]
 
+
 def test_split_top_level_nested():
     """Test that split_top_level ignores commas inside nested angle brackets."""
     s = "key1: value1, key2: struct<inner1: int, inner2: string>, key3: boolean"
@@ -47,6 +46,7 @@ def test_split_top_level_nested():
         " key3: boolean"
     ]
     assert result == expected
+
 
 @pytest.mark.parametrize("type_str, expected_type", [
     ("string", StringType),
@@ -72,11 +72,13 @@ def test_parse_decimal():
     assert t.precision == 5
     assert t.scale == 2
 
+
 def test_parse_array_of_primitives():
     """Test that parse_sql_type returns a ListType when parsing array of primitives."""
     t = parse_sql_type("array<integer>")
     assert isinstance(t, ListType)
     assert isinstance(t.element_type, IntegerType)
+
 
 def test_parse_map():
     """Test that parse_sql_type returns a MapType with correct key and value types."""
@@ -84,6 +86,7 @@ def test_parse_map():
     assert isinstance(t, MapType)
     assert isinstance(t.key_type, StringType)
     assert isinstance(t.value_type, IntegerType)
+
 
 def test_parse_struct():
     """Test that parse_sql_type returns a StructType with expected field names and types."""
@@ -95,6 +98,7 @@ def test_parse_struct():
     assert names == ["foo", "bar"]
     assert isinstance(types[0], StringType)
     assert isinstance(types[1], IntegerType)
+
 
 def test_parse_nested_struct():
     """Test that parse_sql_type correctly parses nested StructTypes."""
@@ -108,6 +112,7 @@ def test_parse_nested_struct():
     assert inner_field.name == "inner"
     assert isinstance(inner_field.field_type, BooleanType)
 
+
 def test_parse_array_of_struct():
     """Test that parse_sql_type returns a ListType with a StructType element."""
     t = parse_sql_type("array<struct<foo: string, bar: int>>")
@@ -116,6 +121,7 @@ def test_parse_array_of_struct():
     assert isinstance(element, StructType)
     names = [f.name for f in element.fields]
     assert names == ["foo", "bar"]
+
 
 @pytest.mark.parametrize("type_str", [
     "unknown",
@@ -127,6 +133,7 @@ def test_parse_sql_type_error(type_str):
     """Test that parse_sql_type raises ValueError for unsupported or unknown type strings."""
     with pytest.raises(ValueError):
         parse_sql_type(type_str)
+
 
 def test_is_narrower_than_cases():
     """Test the is_narrower_than function for valid numeric widening and invalid cases."""
@@ -140,15 +147,18 @@ def test_is_narrower_than_cases():
     assert not is_narrower_than(StringType(), IntegerType())
     assert not is_narrower_than(DoubleType(), IntegerType())
 
+
 def test_clean_type_str_primitive():
     """Test clean_type_str returns lowercase string names for primitive types."""
     assert clean_type_str(StringType()) == "string"
     assert clean_type_str(BooleanType()) == "boolean"
 
+
 def test_clean_type_str_list():
     """Test clean_type_str formats Iceberg ListType correctly with nested type string."""
     t = ListType(element_id=1, element_type=StringType())
     assert clean_type_str(t) == "list<string>"
+
 
 def test_clean_type_str_map():
     """Test clean_type_str formats Iceberg MapType with key/value type strings."""
@@ -158,6 +168,7 @@ def test_clean_type_str_map():
     )
     assert clean_type_str(t) == "map<string, int>"
 
+
 def test_clean_type_str_struct():
     """Test clean_type_str correctly formats StructType with optional and required fields."""
     fields = [
@@ -166,106 +177,6 @@ def test_clean_type_str_struct():
     ]
     t = StructType(*fields)
     assert clean_type_str(t) == "struct<name: string, age: optional int>"
-
-
-
-def test_iceberg_schema_serializer_to_dict_and_from_dict_roundtrip():
-    """Test that serializing and deserializing an Iceberg schema returns an equivalent schema."""
-    original_schema = StructType(
-        NestedField(field_id=1, name="name", field_type=StringType(), required=True),
-        NestedField(field_id=2, name="age", field_type=IntegerType(), required=False),
-        NestedField(
-            field_id=3,
-            name="tags",
-            field_type=ListType(element_id=4, element_type=StringType(), element_required=True),
-            required=False
-        ),
-        NestedField(
-            field_id=5,
-            name="properties",
-            field_type=MapType(
-                key_id=6,
-                key_type=StringType(),
-                value_id=7,
-                value_type=IntegerType(),
-                value_required=True
-            ),
-            required=False
-        )
-    )
-    iceberg_schema = IcebergSchema(*original_schema.fields, schema_id=42)
-
-    serialized = IcebergSchemaSerializer.to_dict(iceberg_schema)
-    assert serialized["schema-id"] == 42
-    assert serialized["type"] == "struct"
-    assert len(serialized["fields"]) == 4
-
-    deserialized = IcebergSchemaSerializer.from_dict(serialized)
-    assert isinstance(deserialized, IcebergSchema)
-    assert len(deserialized.fields) == 4
-    assert deserialized.schema_id == 42
-
-
-def test_iceberg_schema_serializer_nested_struct():
-    """Test that nested StructTypes are correctly serialized and deserialized."""
-    nested_struct = StructType(
-        NestedField(field_id=2, name="id", field_type=IntegerType(), required=True),
-        NestedField(field_id=3, name="flag", field_type=BooleanType(), required=False)
-    )
-    schema = IcebergSchema(
-        NestedField(field_id=1, name="user", field_type=nested_struct, required=True)
-    )
-    serialized = IcebergSchemaSerializer.to_dict(schema)
-    assert serialized["fields"][0]["name"] == "user"
-    inner = serialized["fields"][0]["type"]
-    assert inner["type"] == "struct"
-    assert len(inner["fields"]) == 2
-
-    deserialized = IcebergSchemaSerializer.from_dict(serialized)
-    user_field = deserialized.find_field("user")
-    assert isinstance(user_field.field_type, StructType)
-    assert len(user_field.field_type.fields) == 2
-
-
-def test_iceberg_schema_serializer_decimal_string_format():
-    """Test that decimal types are serialized as strings and parsed back correctly."""
-    schema = IcebergSchema(
-        NestedField(field_id=1, name="amount", field_type=DecimalType(10, 2), required=True)
-    )
-    serialized = IcebergSchemaSerializer.to_dict(schema)
-    field_type = serialized["fields"][0]["type"]
-    assert field_type == "decimal(10, 2)"
-
-    deserialized = IcebergSchemaSerializer.from_dict(serialized)
-    assert isinstance(deserialized.fields[0].field_type, DecimalType)
-    assert deserialized.fields[0].field_type.precision == 10
-    assert deserialized.fields[0].field_type.scale == 2
-
-
-def test_iceberg_schema_serializer_invalid_type_string():
-    """Test that unsupported primitive type strings raise ValueError during deserialization."""
-    invalid_dict = {
-        "type": "struct",
-        "schema-id": 1,
-        "fields": [
-            {"id": 1, "name": "foo", "type": "unsupported", "required": True}
-        ]
-    }
-    with pytest.raises(ValueError, match="Unsupported primitive type"):
-        IcebergSchemaSerializer.from_dict(invalid_dict)
-
-
-def test_iceberg_schema_serializer_invalid_type_structure():
-    """Test that non-string and non-dict types raise ValueError during deserialization."""
-    invalid_dict = {
-        "type": "struct",
-        "fields": [
-            {"id": 1, "name": "foo", "type": 123, "required": True}
-        ]
-    }
-    with pytest.raises(ValueError, match="Unsupported type structure"):
-        IcebergSchemaSerializer.from_dict(invalid_dict)
-
 
 
 def test_object_with_properties():

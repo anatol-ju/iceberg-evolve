@@ -1,11 +1,13 @@
 import json
 import subprocess
 import sys
+from types import SimpleNamespace
 
 import pytest
 from typer.testing import CliRunner
 
 import iceberg_evolve.cli as cli_module
+from iceberg_evolve.cli import _parse_json_config
 
 class DummyOp:
     def __init__(self, display_str, to_dict_dict):
@@ -35,6 +37,9 @@ class DummySchema:
     @classmethod
     def from_file(cls, path):
         return cls()
+    @classmethod
+    def from_iceberg(cls, table_name, catalog, config):
+        return cls(iceberg_schema="dummy_schema")
     def evolve(self, new, table, dry_run, quiet, strict, allow_breaking, return_applied_schema):
         # record arguments for testing via attribute
         self._evolve_args = (new, table, dry_run, quiet, strict, allow_breaking, return_applied_schema)
@@ -120,8 +125,8 @@ def test_evolve_return_applied_schema(monkeypatch, tmp_path):
     import pyiceberg.catalog as cat_mod
     monkeypatch.setattr(cat_mod, 'load_catalog', lambda url: type('C', (), {'load_table': lambda self, ident: DummyTable()})())
     # Patch serializer
-    import iceberg_evolve.utils as utils_mod
-    monkeypatch.setattr(utils_mod.IcebergSchemaSerializer, 'to_dict', lambda s: {"dummy":"schema"})
+    import iceberg_evolve.serializer as serializer_mod
+    monkeypatch.setattr(serializer_mod.IcebergSchemaJSONSerializer, 'to_dict', lambda s: {"dummy":"schema"})
 
     result = runner.invoke(cli_module.app, ["evolve", "-c", "u", "-t", "t", "-p", str(schema), "--return-applied-schema"])
     assert result.exit_code == 0
@@ -179,3 +184,110 @@ def test_cli_main_module_diff_human(tmp_path):
     # 3. Expect at least one AddColumn line in the human-readable output
     assert result.returncode == 0
     assert "AddColumn" in result.stdout or "add" in result.stdout.lower()
+
+
+from iceberg_evolve.cli import app
+from iceberg_evolve.schema import Schema
+from iceberg_evolve.serializer import IcebergSchemaJSONSerializer
+
+
+def test_serialize_creates_file_and_outputs_message(monkeypatch, tmp_path):
+    """
+    Given valid catalog URL, table identifier, and output path,
+    the serialize command should write the correct JSON schema to disk
+    and output a confirmation message.
+    """
+    # Arrange: stub Schema.from_iceberg and serializer
+    dummy_schema_obj = DummySchema(iceberg_schema="dummy_schema")
+    dummy_dict = {"key": "value"}
+
+    monkeypatch.setattr(Schema, "from_iceberg", lambda table_name, catalog, config: dummy_schema_obj)
+    monkeypatch.setattr(IcebergSchemaJSONSerializer, "to_dict", lambda iceberg_schema: dummy_dict)
+
+    output_file = tmp_path / "schema.json"
+
+    # Act: invoke the CLI
+    result = runner.invoke(
+        app,
+        [
+            "serialize",
+            "--catalog-url",
+            "hive://localhost:9083",
+            "--table-ident",
+            "db.table",
+            "--output-path",
+            str(output_file),
+        ],
+    )
+
+    # Assert: exit code, file content, and output message
+    assert result.exit_code == 0
+    assert output_file.exists(), f"Expected file at {output_file}"
+
+    written = json.loads(output_file.read_text())
+    assert written == dummy_dict, "JSON content does not match serializer output"
+
+    assert "✅ Schema for 'db.table' written to" in result.stdout
+
+
+def test_serialize_short_flags(monkeypatch, tmp_path):
+    """
+    Using the short flag options (-c, -t, -p),
+    serialize should still write the JSON and confirm.
+    """
+    # Arrange
+    dummy_schema_obj = DummySchema(iceberg_schema="x")
+    dummy_dict = {"a": 1}
+    monkeypatch.setattr(Schema, "from_iceberg", lambda table_name, catalog, config: dummy_schema_obj)
+    monkeypatch.setattr(IcebergSchemaJSONSerializer, "to_dict", lambda iceberg_schema: dummy_dict)
+
+    output_file = tmp_path / "out.json"
+
+    # Act
+    result = runner.invoke(
+        app,
+        [
+            "serialize",
+            "-c",
+            "glue",
+            "-t",
+            "ns.tbl",
+            "-p",
+            str(output_file),
+        ],
+    )
+
+    # Assert
+    assert result.exit_code == 0
+    assert output_file.exists()
+    assert json.loads(output_file.read_text()) == dummy_dict
+    assert "✅ Schema for 'ns.tbl' written to" in result.stdout
+
+
+class DummyParam(SimpleNamespace):
+    # mimic what typer.ClickParam will present
+    pass
+
+def test_parse_none_returns_none():
+    result = _parse_json_config(ctx=None, param=DummyParam(name="config"), value=None)
+    assert result is None
+
+def test_parse_empty_string_returns_none():
+    result = _parse_json_config(ctx=None, param=DummyParam(name="config"), value="")
+    assert result is None
+
+def test_parse_valid_json_string():
+    raw = '{"foo": [1, 2, 3], "bar": {"nested": true}}'
+    result = _parse_json_config(ctx=None, param=DummyParam(name="config"), value=raw)
+    # JSON booleans come back as Python booleans
+    assert result == {"foo": [1, 2, 3], "bar": {"nested": True}}
+
+def test_parse_invalid_json_raises_badparameter():
+    from typer import BadParameter
+    bad = "{not: valid,,, json}"
+    with pytest.raises(BadParameter) as excinfo:
+        _parse_json_config(ctx=None, param=DummyParam(name="config"), value=bad)
+    # ensure the exception mentions our flag name and JSON error
+    msg = str(excinfo.value)
+    assert "Invalid JSON for --config" in msg
+    assert "Expecting property name enclosed in double quotes" in msg or "Expecting" in msg

@@ -1,8 +1,9 @@
-import sys
 import json
 import typer
+
 from iceberg_evolve.diff import SchemaDiff
 from iceberg_evolve.schema import Schema
+from iceberg_evolve.serializer import IcebergSchemaJSONSerializer
 
 app = typer.Typer(help="Iceberg-Evolve command-line interface")
 
@@ -13,7 +14,7 @@ def diff(
     match_by: str = typer.Option(
         "id",
         "--match-by",
-        help="Matching strategy: name or id. Defaults to 'id' (Iceberg standard).",
+        help="Matching strategy: name or id.",
     ),
     json_output: bool = typer.Option(
         False,
@@ -24,20 +25,13 @@ def diff(
     """
     Show schema difference operations between two Iceberg schemas.
 
-    Args:
-        old_schema: Path to the old schema JSON file or a JSON string.
-        new_schema: Path to the new schema JSON file or a JSON string.
-        match_by: How to match fields between schemas, either by 'name' or 'id'.
-        json_output: If true, outputs operations as JSON; otherwise, displays human-friendly format.
+    Example 1: Compare by name and print human-friendly operations
 
-    Example:
-    ```
-    # Compare by name and print human-friendly operations
-    iceberg-evolve diff old_schema.json new_schema.json
+    $ iceberg-evolve diff old_schema.json new_schema.json
 
-    # Compare by id and output raw JSON
-    iceberg-evolve diff old_schema.json new_schema.json --match-by id --json
-    ```
+    Example 2: Compare by id and output JSON
+
+    $ iceberg-evolve diff old_schema.json new_schema.json --match-by id --json
     """
     # Load schemas
     old = (
@@ -67,7 +61,8 @@ def diff(
     else:
         # Human-friendly display
         for op in ops:
-            typer.echo(op.display())
+            typer.echo(op.display(), nl=False)
+
 
 @app.command()
 def evolve(
@@ -95,25 +90,15 @@ def evolve(
         False, "--allow-breaking", help="Allow breaking changes in schema evolution."
     ),
     return_applied_schema: bool = typer.Option(
-        False, "--return-applied-schema", help="Return the applied schema after evolution."
+        False, "--return-applied-schema", help="Return the applied schema after evolution and prints it to console in JSON format."
     )
 ) -> None:
     """
     Apply a schema evolution to the specified Iceberg table.
 
-    Args:
-        catalog_url: URI of the Iceberg catalog (e.g., 'hive://localhost:9083').
-        table_ident: Identifier of the Iceberg table (e.g., 'default.users').
-        schema_path: Path to the new schema JSON file.
-        dry_run: If true, shows what changes would be made without applying them.
-        quiet: If true, suppresses output messages.
-        allow_breaking: If true, allows breaking changes in the schema evolution.
-        return_applied_schema: If true, returns the applied schema after evolution.
-
     Example:
-    ```
-    iceberg-evolve evolve -c hive://localhost:9083 -t default.users -p new_schema.json
-    ```
+
+    $ iceberg-evolve evolve -c hive://localhost:9083 -t default.users -p new_schema.json
     """
     # Load new schema
     new = Schema.from_file(schema_path.name)
@@ -137,9 +122,9 @@ def evolve(
 
     if return_applied_schema:
         # Serialize the applied (evolved) schema back into JSON for human consumption
-        from iceberg_evolve.utils import IcebergSchemaSerializer
+        from iceberg_evolve.serializer import IcebergSchemaJSONSerializer
 
-        schema_dict = IcebergSchemaSerializer.to_dict(applied.schema)
+        schema_dict = IcebergSchemaJSONSerializer.to_dict(applied.schema)
         # Print the schema in a human-readable format
         if not quiet:
             typer.secho("Evolved schema:", fg=typer.colors.GREEN)
@@ -152,6 +137,60 @@ def evolve(
             typer.secho("Schema evolution operations applied successfully.", fg=typer.colors.GREEN)
 
     typer.secho("Schema evolution complete", fg=typer.colors.GREEN)
+
+
+def _parse_json_config(
+    ctx: typer.Context,
+    param: typer.CallbackParam,
+    value: str | None,
+) -> dict | None:
+    if not value:
+        return None
+    try:
+        return json.loads(value)
+    except json.JSONDecodeError as e:
+        raise typer.BadParameter(f"Invalid JSON for --{param.name}: {e}")
+
+
+@app.command()
+def serialize(
+    catalog_url: str = typer.Option(
+        ..., "--catalog-url", "-c",
+        help="Catalog URL or alias (e.g. hive://localhost:9083 or a name from pyiceberg.yaml)."
+    ),
+    table_ident: str = typer.Option(
+        ..., "--table-ident", "-t",
+        help="Iceberg table identifier, e.g. 'db.schema.table' or 'namespace.table'."
+    ),
+    output_path: str = typer.Option(
+        ..., "--output-path", "-p",
+        help="Filesystem path where the standalone JSON schema will be written."
+    ),
+    config: str | None = typer.Option(
+        None,
+        "--config",
+        callback=_parse_json_config,
+        help=(
+            "Optional catalog configuration as a JSON string. "
+            "E.g. '{\"warehouse\":\"/data/iceberg\",\"hive-site.xml\":\"/etc/hive/conf/hive-site.xml\"}'"
+        )
+    )
+):
+    """
+    Serialize an Iceberg table's schema to a standalone JSON file.
+    """
+    # Pass a `config` argument (None) so tests expecting three params bind correctly
+    schema_obj = Schema.from_iceberg(table_name=table_ident, catalog=catalog_url, config=config)
+
+    # Turn it into the Iceberg JSON‐schema dict
+    schema_dict = IcebergSchemaJSONSerializer.to_dict(schema_obj.schema)
+
+    # Write out to disk
+    with open(output_path, "w") as f:
+        json.dump(schema_dict, f, indent=2)
+
+    typer.secho(f"✅ Schema for '{table_ident}' written to {output_path}", fg=typer.colors.GREEN)
+
 
 if __name__ == "__main__":
     app()

@@ -1,3 +1,17 @@
+"""
+Integration tests for the iceberg_evolve package.
+These tests validate the SchemaDiff functionality against real Iceberg schemas
+and ensure that schema evolution operations are correctly detected and applied.
+
+Note: The examples directory must include:
+- users_current.iceberg.json
+- users_new.iceberg.json
+- users_renamed.iceberg.json
+- users_union_candidate.iceberg.json
+with correct Iceberg-style schema including field-ids and types.
+The Hive catalog must be configured correctly to run these tests.
+Ensure you have the necessary Iceberg and Hive setup before running.
+"""
 import json
 import pathlib
 import warnings
@@ -11,14 +25,6 @@ from rich.console import Console
 from iceberg_evolve.diff import SchemaDiff
 from iceberg_evolve.migrate import RenameColumn, UpdateColumn
 from iceberg_evolve.schema import Schema as EvolveSchema
-
-
-
-# Note: The examples directory must include:
-# - users_current.iceberg.json
-# - users_new.iceberg.json
-# - users_renamed.iceberg.json
-# with correct Iceberg-style schema including field-ids
 
 
 @pytest.mark.integration

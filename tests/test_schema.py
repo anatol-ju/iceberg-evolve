@@ -2,7 +2,7 @@ import pytest
 
 from iceberg_evolve.migrate import AddColumn, MoveColumn, RenameColumn, UnionSchema
 from iceberg_evolve.schema import Schema as EvolveSchema
-from iceberg_evolve.utils import IcebergSchemaSerializer
+from iceberg_evolve.serializer import IcebergSchemaJSONSerializer
 import iceberg_evolve.schema as sc_module
 from pyiceberg.schema import Schema as IcebergSchema
 from pyiceberg.types import NestedField, StringType
@@ -14,7 +14,7 @@ def test_repr_returns_string():
         "schema-id": 0,
         "fields": [{"id": 1, "name": "id", "type": "int", "required": True}]
     }
-    iceberg_schema = IcebergSchemaSerializer.from_dict(schema_dict)
+    iceberg_schema = IcebergSchemaJSONSerializer.from_dict(schema_dict)
     schema = EvolveSchema(iceberg_schema)
     assert isinstance(repr(schema), str)
 
