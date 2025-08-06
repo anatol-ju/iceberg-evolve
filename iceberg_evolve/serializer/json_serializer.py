@@ -172,4 +172,4 @@ class IcebergSchemaJSONSerializer:
             raise ValueError(f"Unsupported type structure: {type_data}.")
 
         fields = [parse_field(f) for f in data["fields"]]
-        return IcebergSchema(*fields, schema_id=data.get("schema-id", 0))#
+        return IcebergSchema(*fields, schema_id=data.get("schema-id", 0))

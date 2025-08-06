@@ -247,7 +247,6 @@ def test_primitive_field():
 def test_object_missing_properties():
     """Test that missing 'properties' or 'additionalProperties' raises an error."""
     spec = {"type": "object"}
-    import pytest
     with pytest.raises(ValueError, match="must define either 'properties' or 'additionalProperties'"):
         convert_json_to_iceberg_field("invalid_obj", spec, IDAllocator(), required_fields=set())
 
@@ -255,7 +254,6 @@ def test_object_missing_properties():
 def test_array_missing_items():
     """Test that missing 'items' in an array raises an error."""
     spec = {"type": "array"}
-    import pytest
     with pytest.raises(ValueError, match="must have 'items' defined"):
         convert_json_to_iceberg_field("invalid_arr", spec, IDAllocator(), required_fields=set())
 
@@ -268,7 +266,6 @@ def test_map_missing_key_or_value():
             "key": {"type": "string"}
         }
     }
-    import pytest
     with pytest.raises(ValueError, match="must have 'key' and 'value' under 'properties'"):
         convert_json_to_iceberg_field("invalid_map", spec, IDAllocator(), required_fields=set())
 
@@ -276,7 +273,6 @@ def test_map_missing_key_or_value():
 def test_unsupported_primitive_type():
     """Test that unsupported primitive types raise an error."""
     spec = {"type": "uuid"}
-    import pytest
     with pytest.raises(ValueError, match="Unsupported primitive type"):
         convert_json_to_iceberg_field("id", spec, IDAllocator(), required_fields=set())
 
