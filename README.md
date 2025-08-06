@@ -49,6 +49,11 @@ pre-commit install  # optional: enable linting and formatting hooks
 ```
 
 ## 🧱 Quick Examples
+For a quick look at the output, install the project and run:
+```
+poetry run example
+```
+
 ### Python API
 ```python
 from iceberg_evolve.schema import Schema
@@ -109,9 +114,9 @@ catalogs:
     type: glue
     region: eu-west-1
 ```
-Pass the catalog name or full URI to the `evolve` command via `--catalog-url` (e.g., `glue://default`).
+You can find an example configuration in the examples directory. Alternatively, you can use environmental variables to set the catalog details.
 
-Alternatively, you can use environmental variables to set the catalog details.
+When using the CLI, pass the catalog name or full URI to the `evolve` command via `--catalog-url` (e.g., `glue://default`).
 
 ## 🧪 Testing
 Run unit tests with pytest:
@@ -120,17 +125,12 @@ poetry run pytest
 ```
 Coverage reports are generated automatically via the existing configuration.
 
-For an example, install the project and run:
-```
-poetry run example
-```
-
 This project contains a basic local setup to test the functionality with a `hive` metastore. The purpose is to give you some insights before applying the package in your pipelines.
-You can run integration tests, once the Docker containers are up. Either by
+You can run integration tests, once the Docker containers are up. Either by:
 ```
 poetry run pytest tests/test_integration.py
 ```
-Or:
+Or without logging into the container:
 ```
 docker compose exec runner poetry run pytest tests/test_integration.py
 ```
