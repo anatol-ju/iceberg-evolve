@@ -72,7 +72,7 @@ old_schema = Schema.from_json_file("schemas/users_current.json")
 # Write it out to a standalone JSON file...
 IcebergSchemaJSONSerializer.to_json_file(old_schema, "schemas/users_exported.json")
 
-# …and read it back in later
+# ...and read it back in later
 reloaded_schema = IcebergSchemaJSONSerializer.from_json_file("schemas/users_exported.json")
 ```
 
@@ -97,7 +97,8 @@ iceberg-evolve serialize \
 ```
 
 ## ⚙️ Configuration
-Create a `pyiceberg.yaml` in your project root or `$HOME/.pyiceberg/pyiceberg.yaml` to configure catalogs:
+This package relies on PyIceberg, therefore the configuration is the same. See [documentation](https://py.iceberg.apache.org/configuration/).
+Create a `pyiceberg.yaml` in your project root to configure catalogs:
 ```yaml
 catalogs:
   default:
@@ -110,7 +111,7 @@ catalogs:
 ```
 Pass the catalog name or full URI to the `evolve` command via `--catalog-url` (e.g., `glue://default`).
 
-Alternatively, set environment variables to control PyIceberg. See [documentation](https://py.iceberg.apache.org/configuration/).
+Alternatively, you can use environmental variables to set the catalog details.
 
 ## 🧪 Testing
 Run unit tests with pytest:
@@ -118,6 +119,22 @@ Run unit tests with pytest:
 poetry run pytest
 ```
 Coverage reports are generated automatically via the existing configuration.
+
+For an example, install the project and run:
+```
+poetry run example
+```
+
+This project contains a basic local setup to test the functionality with a `hive` metastore. The purpose is to give you some insights before applying the package in your pipelines.
+You can run integration tests, once the Docker containers are up. Either by
+```
+poetry run pytest tests/test_integration.py
+```
+Or:
+```
+docker compose exec runner poetry run pytest tests/test_integration.py
+```
+You don't have to select the integration test explicitly, it will be skipped automatically if you run unit tests outside of a container.
 
 ## 📝 License
 This project is licensed under the MIT License. See the LICENSE file for details.
