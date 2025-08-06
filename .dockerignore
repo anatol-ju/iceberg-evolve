@@ -1,0 +1,12 @@
+# Ignore local virtualenvs
+.venv/
+**/.venv/
+
+# Poetry/misc cache
+__pycache__/
+*.py[cod]
+*.egg-info/
+.cache/
+
+# Postgres data directory
+pg-data/

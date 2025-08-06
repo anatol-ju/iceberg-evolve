@@ -1,0 +1,71 @@
+[project]
+name = "iceberg-evolve"
+version = "1.0.0"
+description = "Schema diffing and evolution tool for Iceberg and beyond."
+authors = [
+    {name = "Anatol Jurenkow", email = "azurius@t-online.de"}
+]
+
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "pyiceberg[hive,pyarrow] (>=0.9.1,<1.0.0)",
+    "schemaworks (>=1.1.0,<2.0.0)",
+    "boto3 (>=1.34.0,<2.0.0)",
+    "rich (>=10.11.0,<14.0.0)",
+    "typer (>=0.16.0,<0.17.0)"
+]
+keywords = ["iceberg", "schema", "evolution", "data-engineering"]
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Libraries :: Python Modules"
+]
+
+[project.urls]
+homepage = "https://github.com/anatol-ju/iceberg-evolve"
+repository = "https://github.com/anatol-ju/iceberg-evolve"
+
+[project.optional-dependencies]
+dev = [
+    "moto (>=5.1.1,<6.0.0)",
+    "pytest (>=8.3.5,<9.0.0)",
+    "pytest-cov (>=6.0.0,<7.0.0)",
+    "pytest-mock (>=3.14.0,<4.0.0)",
+    "ruff (>=0.9.9,<1.0.0)"
+]
+
+[tool.pytest.ini_options]
+addopts = "--cov --cov-report term-missing"
+# Ignore this because it contains a conftest.py file
+norecursedirs = ["pg-data"]
+markers = [
+    "integration: mark a test as an integration test."
+]
+
+[tool.coverage.run]
+omit = [
+    "tests/*",
+    "examples/*",
+    "conftest.py",
+    "*__init__.py"
+]
+
+[tool.poetry.group.dev.dependencies]
+pre-commit = "^4.2.0"
+
+[tool.poetry]
+packages = [
+    { include = "iceberg_evolve", from = "." }
+]
+
+[project.scripts]
+example = "examples.evolve_test:main"
+iceberg-evolve = "iceberg_evolve.cli:app"
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"

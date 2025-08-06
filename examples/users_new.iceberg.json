@@ -1,0 +1,107 @@
+{
+    "type": "struct",
+    "schema-id": 0,
+    "fields": [
+        {
+            "id": 1,
+            "name": "id",
+            "required": true,
+            "type": "string"
+        },
+        {
+            "id": 2,
+            "name": "age",
+            "required": true,
+            "type": "int"
+        },
+        {
+            "id": 3,
+            "name": "signup_datetime",
+            "required": false,
+            "type": "timestamp"
+        },
+        {
+            "id": 7,
+            "name": "username",
+            "required": false,
+            "type": "string"
+        },
+        {
+            "id": 17,
+            "name": "is_active",
+            "required": false,
+            "type": "boolean"
+        },
+        {
+            "id": 4,
+            "name": "email",
+            "required": false,
+            "type": "string"
+        },
+        {
+            "id": 5,
+            "name": "metadata",
+            "required": false,
+            "type": {
+                "type": "struct",
+                "fields": [
+                    {
+                        "id": 9,
+                        "name": "location",
+                        "required": false,
+                        "type": {
+                            "type": "struct",
+                            "fields": [
+                                {
+                                    "id": 11,
+                                    "name": "city",
+                                    "required": false,
+                                    "type": "string"
+                                },
+                                {
+                                    "id": 12,
+                                    "name": "country",
+                                    "required": false,
+                                    "type": "string"
+                                }
+                            ]
+                        }
+                    },
+                    {
+                        "id": 10,
+                        "name": "login_attempts",
+                        "required": false,
+                        "type": {
+                            "type": "list",
+                            "element-id": 13,
+                            "element-required": true,
+                            "element": {
+                                "type": "struct",
+                                "fields": [
+                                    {
+                                        "id": 14,
+                                        "name": "timestamp",
+                                        "required": true,
+                                        "type": "int"
+                                    },
+                                    {
+                                        "id": 15,
+                                        "name": "success",
+                                        "required": true,
+                                        "type": "boolean"
+                                    }
+                                ]
+                            }
+                        }
+                    },
+                    {
+                        "id": 16,
+                        "name": "used_login",
+                        "required": false,
+                        "type": "string"
+                    }
+                ]
+            }
+        }
+    ]
+}

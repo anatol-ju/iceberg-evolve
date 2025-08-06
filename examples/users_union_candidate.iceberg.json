@@ -1,0 +1,46 @@
+{
+    "type": "struct",
+    "schema-id": 1,
+    "fields": [
+        {
+            "id": 1,
+            "name": "address_changed",
+            "required": false,
+            "type": "boolean"
+        },
+        {
+            "id": 2,
+            "name": "new_address",
+            "required": false,
+            "type": {
+                "type": "struct",
+                "fields": [
+                    {
+                        "id": 3,
+                        "name": "street",
+                        "required": false,
+                        "type": "string"
+                    },
+                    {
+                        "id": 4,
+                        "name": "city",
+                        "required": false,
+                        "type": "string"
+                    },
+                    {
+                        "id": 5,
+                        "name": "state",
+                        "required": false,
+                        "type": "string"
+                    },
+                    {
+                        "id": 6,
+                        "name": "zip_code",
+                        "required": false,
+                        "type": "string"
+                    }
+                ]
+            }
+        }
+    ]
+}
